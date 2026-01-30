@@ -134,3 +134,109 @@ Expected environment variables (loaded by `lfg_config.py`):
 - Positions appear empty
 - Open orders appear empty
 - Cancels fail silently
+
+---
+
+## Deployment
+
+### GitHub Repository
+
+Repository: `https://github.com/jmoss82/hyperliquid-bot`
+
+The bot is version controlled with Git and deployed via GitHub to Railway for low-latency execution.
+
+### Railway Deployment
+
+The bot runs on Railway to minimize latency compared to local execution (~200ms vs ~700ms).
+
+**Initial Setup:**
+
+1. Install Railway CLI:
+   ```bash
+   npm install -g @railway/cli
+   ```
+
+2. Login to Railway:
+   ```bash
+   railway login
+   ```
+
+3. Link to project (from repo root):
+   ```bash
+   cd "Project Money 2"
+   railway link
+   ```
+   Select: `hyperliquid-bot`
+
+**Environment Variables (Railway Dashboard):**
+
+Set these in Railway → Project → Variables:
+```
+HL_WALLET_ADDRESS=0x...
+HL_PRIVATE_KEY=0x...
+HL_ACCOUNT_ADDRESS=0x...
+```
+
+**Deployment Files:**
+
+- `Procfile` - Tells Railway to run as worker process
+- `requirements.txt` - Combined Python dependencies for both LFG-bot and grid-bot
+
+### Managing the Bot on Railway
+
+**View logs:**
+```bash
+railway logs
+```
+
+**Check status:**
+```bash
+railway status
+```
+
+**Open dashboard:**
+```bash
+railway open
+```
+
+**Making Updates:**
+
+1. Edit code locally
+2. Commit and push to GitHub:
+   ```bash
+   git add .
+   git commit -m "Update description"
+   git push
+   ```
+3. Railway auto-deploys in ~30 seconds
+
+**Stopping the Bot:**
+
+Use Railway dashboard → Service → Settings → Remove Service
+
+Or temporarily disable by commenting out the Procfile:
+```bash
+# Edit Procfile, comment out the worker line
+git add Procfile
+git commit -m "Pause bot"
+git push
+```
+
+### Region Selection
+
+For lowest latency:
+- **Virginia (US-East)** - Currently ~500ms execution time
+- Singapore/Tokyo regions may offer lower latency if available
+
+---
+
+## Local Development
+
+Run locally for testing:
+
+```bash
+cd LFG-bot
+python market_maker.py
+```
+
+Credentials loaded from `../grid-bot/.env.hyperliquid`
