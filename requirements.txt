@@ -1,0 +1,30 @@
+# Combined requirements for Railway deployment
+# LFG-bot + grid-bot dependencies
+
+# Exchange connectivity
+ccxt>=4.0.0
+
+# Data handling
+pandas>=2.0.0
+
+# Technical analysis
+ta>=0.11.0
+
+# WebSocket for real-time data
+websockets>=12.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# HTTP requests
+requests>=2.31.0
+aiohttp>=3.8.0
+
+# Logging
+loguru>=0.7.0
+
+# Ethereum (for signing orders)
+eth-account>=0.8.0
+
+# HyperLiquid SDK
+hyperliquid-python-sdk>=0.2.0
