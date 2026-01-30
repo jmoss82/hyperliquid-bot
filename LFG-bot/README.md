@@ -78,9 +78,9 @@ Edit `market_maker.py` main() function:
 ```python
 mm = MarketMaker(
     coin="xyz:SILVER",
-    spread_threshold_bps=5.0,       # Only trade when spread > 5 bps
+    spread_threshold_bps=6.0,       # Only trade when spread > 6 bps
     position_size_usd=11.0,         # $11 per trade
-    spread_position=0.3,            # 30% into spread (momentum positioning)
+    spread_position=0.2,            # 20% into spread (closer to edges)
     max_patience_ms=300,            # 300ms patience
     max_positions=1,                # One at a time
     max_trades=999999,              # No practical limit
@@ -101,11 +101,11 @@ Additional freshness controls (defaults):
 
 ### Spread Position (Momentum Strategy)
 
-With `spread_position=0.3` and spread of $117.00 bid / $117.08 ask:
-- BUY placed at: $117.08 - ($0.08 × 0.3) = **$117.056** (closer to ask - fills on upward momentum)
-- SELL placed at: $117.00 + ($0.08 × 0.3) = **$117.024** (closer to bid - fills on downward momentum)
+With `spread_position=0.2` and spread of $117.00 bid / $117.08 ask:
+- BUY placed at: $117.08 - ($0.08 × 0.2) = **$117.064** (closer to ask - fills on upward momentum)
+- SELL placed at: $117.00 + ($0.08 × 0.2) = **$117.016** (closer to bid - fills on downward momentum)
 
-**Strategy:** Orders fill when price moves in favorable direction, avoiding adverse selection from mean reversion fills.
+**Strategy:** Orders positioned closer to spread edges (20%) to capture cleaner directional moves. Wider spreads (6+ bps) provide better signal quality.
 
 ### Credentials
 

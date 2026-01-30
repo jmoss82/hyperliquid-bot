@@ -9,9 +9,9 @@ Strategy:
 5. Repeat continuously
 
 Key parameters:
-- spread_threshold_bps: Minimum spread to enter (default: 5 bps)
+- spread_threshold_bps: Minimum spread to enter (default: 6 bps)
 - position_size_usd: Size per trade (default: $10)
-- spread_position: Where to place orders (0=bid/ask, 0.5=mid, default: 0.3)
+- spread_position: Where to place orders (0=ask/bid, 0.5=mid, default: 0.2)
 - max_patience_ms: How long to wait before repricing (default: 300ms)
 """
 import asyncio
@@ -1475,9 +1475,9 @@ async def main():
         mm = MarketMaker(
             client=client,
             coin="xyz:SILVER",
-            spread_threshold_bps=5.0,       # Only trade when spread > 5 bps
+            spread_threshold_bps=6.0,       # Only trade when spread > 6 bps
             position_size_usd=11.0,         # $11 per trade
-            spread_position=0.3,            # 30% into spread (faster fills)
+            spread_position=0.2,            # 20% into spread (closer to edges)
             max_patience_ms=300,            # 300ms patience
             max_positions=1,                # One at a time
             max_trades=999999,              # No practical limit
