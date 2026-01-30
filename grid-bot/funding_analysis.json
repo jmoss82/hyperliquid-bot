@@ -1,0 +1,1435 @@
+{
+  "timestamp": "2026-01-23T00:59:28.886192",
+  "current_rates": {
+    "BTC": {
+      "funding_8h": -1.76685e-05,
+      "funding_8h_pct": -0.00176685,
+      "funding_daily_pct": -0.005300549999999999,
+      "funding_apr": -1.9347007499999997
+    },
+    "ETH": {
+      "funding_8h": 5.7129e-06,
+      "funding_8h_pct": 0.00057129,
+      "funding_daily_pct": 0.0017138700000000002,
+      "funding_apr": 0.62556255
+    },
+    "ATOM": {
+      "funding_8h": -4.71177e-05,
+      "funding_8h_pct": -0.00471177,
+      "funding_daily_pct": -0.014135309999999998,
+      "funding_apr": -5.159388149999999
+    },
+    "MATIC": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "DYDX": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "SOL": {
+      "funding_8h": 2.3004e-06,
+      "funding_8h_pct": 0.00023004,
+      "funding_daily_pct": 0.00069012,
+      "funding_apr": 0.2518938
+    },
+    "AVAX": {
+      "funding_8h": -2.14102e-05,
+      "funding_8h_pct": -0.00214102,
+      "funding_daily_pct": -0.0064230599999999995,
+      "funding_apr": -2.3444168999999997
+    },
+    "BNB": {
+      "funding_8h": -5.6327e-06,
+      "funding_8h_pct": -0.00056327,
+      "funding_daily_pct": -0.0016898100000000001,
+      "funding_apr": -0.61678065
+    },
+    "APE": {
+      "funding_8h": -1.24479e-05,
+      "funding_8h_pct": -0.00124479,
+      "funding_daily_pct": -0.00373437,
+      "funding_apr": -1.36304505
+    },
+    "OP": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "LTC": {
+      "funding_8h": -2.33038e-05,
+      "funding_8h_pct": -0.00233038,
+      "funding_daily_pct": -0.00699114,
+      "funding_apr": -2.5517661
+    },
+    "ARB": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "DOGE": {
+      "funding_8h": 1.611e-07,
+      "funding_8h_pct": 1.611e-05,
+      "funding_daily_pct": 4.833e-05,
+      "funding_apr": 0.01764045
+    },
+    "INJ": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "SUI": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "kPEPE": {
+      "funding_8h": -9.40038e-05,
+      "funding_8h_pct": -0.00940038,
+      "funding_daily_pct": -0.02820114,
+      "funding_apr": -10.2934161
+    },
+    "CRV": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "LDO": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "LINK": {
+      "funding_8h": 4.3007e-06,
+      "funding_8h_pct": 0.00043007,
+      "funding_daily_pct": 0.00129021,
+      "funding_apr": 0.47092665
+    },
+    "STX": {
+      "funding_8h": 3.6175e-06,
+      "funding_8h_pct": 0.00036175,
+      "funding_daily_pct": 0.0010852499999999998,
+      "funding_apr": 0.39611624999999995
+    },
+    "RNDR": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "CFX": {
+      "funding_8h": 6.4019e-06,
+      "funding_8h_pct": 0.00064019,
+      "funding_daily_pct": 0.00192057,
+      "funding_apr": 0.70100805
+    },
+    "FTM": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "GMX": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "SNX": {
+      "funding_8h": -4.57126e-05,
+      "funding_8h_pct": -0.00457126,
+      "funding_daily_pct": -0.013713779999999998,
+      "funding_apr": -5.005529699999999
+    },
+    "XRP": {
+      "funding_8h": -1.06224e-05,
+      "funding_8h_pct": -0.00106224,
+      "funding_daily_pct": -0.0031867200000000005,
+      "funding_apr": -1.1631528000000002
+    },
+    "BCH": {
+      "funding_8h": 4.1182e-06,
+      "funding_8h_pct": 0.00041181999999999997,
+      "funding_daily_pct": 0.0012354599999999999,
+      "funding_apr": 0.4509428999999999
+    },
+    "APT": {
+      "funding_8h": -2.96318e-05,
+      "funding_8h_pct": -0.00296318,
+      "funding_daily_pct": -0.008889540000000001,
+      "funding_apr": -3.2446821000000003
+    },
+    "AAVE": {
+      "funding_8h": 9.5054e-06,
+      "funding_8h_pct": 0.00095054,
+      "funding_daily_pct": 0.00285162,
+      "funding_apr": 1.0408413
+    },
+    "COMP": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "MKR": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "WLD": {
+      "funding_8h": -2.0674e-06,
+      "funding_8h_pct": -0.00020674,
+      "funding_daily_pct": -0.00062022,
+      "funding_apr": -0.2263803
+    },
+    "FXS": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "HPOS": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "RLB": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "UNIBOT": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "YGG": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "TRX": {
+      "funding_8h": 2.9411e-06,
+      "funding_8h_pct": 0.00029411,
+      "funding_daily_pct": 0.00088233,
+      "funding_apr": 0.32205045
+    },
+    "kSHIB": {
+      "funding_8h": -8.8991e-06,
+      "funding_8h_pct": -0.0008899099999999999,
+      "funding_daily_pct": -0.00266973,
+      "funding_apr": -0.97445145
+    },
+    "UNI": {
+      "funding_8h": -6.5798e-06,
+      "funding_8h_pct": -0.00065798,
+      "funding_daily_pct": -0.00197394,
+      "funding_apr": -0.7204881
+    },
+    "SEI": {
+      "funding_8h": -2.483e-07,
+      "funding_8h_pct": -2.483e-05,
+      "funding_daily_pct": -7.449e-05,
+      "funding_apr": -0.02718885
+    },
+    "RUNE": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "OX": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "FRIEND": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "SHIA": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "CYBER": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "ZRO": {
+      "funding_8h": -8.469e-05,
+      "funding_8h_pct": -0.008469,
+      "funding_daily_pct": -0.025407000000000002,
+      "funding_apr": -9.273555000000002
+    },
+    "BLZ": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "DOT": {
+      "funding_8h": 9.9201e-06,
+      "funding_8h_pct": 0.00099201,
+      "funding_daily_pct": 0.00297603,
+      "funding_apr": 1.0862509500000002
+    },
+    "BANANA": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "TRB": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "FTT": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "LOOM": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "OGN": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "RDNT": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "ARK": {
+      "funding_8h": 1.18105e-05,
+      "funding_8h_pct": 0.00118105,
+      "funding_daily_pct": 0.0035431499999999997,
+      "funding_apr": 1.29324975
+    },
+    "BNT": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "CANTO": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "REQ": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "BIGTIME": {
+      "funding_8h": -6.2188e-05,
+      "funding_8h_pct": -0.006218799999999999,
+      "funding_daily_pct": -0.018656399999999997,
+      "funding_apr": -6.809585999999999
+    },
+    "KAS": {
+      "funding_8h": -5.6341e-06,
+      "funding_8h_pct": -0.00056341,
+      "funding_daily_pct": -0.00169023,
+      "funding_apr": -0.6169339500000001
+    },
+    "ORBS": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "BLUR": {
+      "funding_8h": -3.07565e-05,
+      "funding_8h_pct": -0.00307565,
+      "funding_daily_pct": -0.009226950000000001,
+      "funding_apr": -3.3678367500000004
+    },
+    "TIA": {
+      "funding_8h": 9.0266e-06,
+      "funding_8h_pct": 0.0009026599999999999,
+      "funding_daily_pct": 0.0027079799999999996,
+      "funding_apr": 0.9884126999999998
+    },
+    "BSV": {
+      "funding_8h": -1.14531e-05,
+      "funding_8h_pct": -0.00114531,
+      "funding_daily_pct": -0.0034359300000000002,
+      "funding_apr": -1.25411445
+    },
+    "ADA": {
+      "funding_8h": 8.216e-06,
+      "funding_8h_pct": 0.0008216,
+      "funding_daily_pct": 0.0024648,
+      "funding_apr": 0.899652
+    },
+    "TON": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "MINA": {
+      "funding_8h": -7.22e-08,
+      "funding_8h_pct": -7.2199999999999995e-06,
+      "funding_daily_pct": -2.166e-05,
+      "funding_apr": -0.0079059
+    },
+    "POLYX": {
+      "funding_8h": -3.76278e-05,
+      "funding_8h_pct": -0.00376278,
+      "funding_daily_pct": -0.01128834,
+      "funding_apr": -4.1202441
+    },
+    "GAS": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "PENDLE": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "STG": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "FET": {
+      "funding_8h": -9.7516e-06,
+      "funding_8h_pct": -0.00097516,
+      "funding_daily_pct": -0.00292548,
+      "funding_apr": -1.0678002
+    },
+    "STRAX": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "NEAR": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "MEME": {
+      "funding_8h": -9.35237e-05,
+      "funding_8h_pct": -0.00935237,
+      "funding_daily_pct": -0.028057110000000003,
+      "funding_apr": -10.240845150000002
+    },
+    "ORDI": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "BADGER": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "NEO": {
+      "funding_8h": -8.4693e-06,
+      "funding_8h_pct": -0.0008469300000000001,
+      "funding_daily_pct": -0.0025407900000000002,
+      "funding_apr": -0.9273883500000001
+    },
+    "ZEN": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "FIL": {
+      "funding_8h": -4.20228e-05,
+      "funding_8h_pct": -0.00420228,
+      "funding_daily_pct": -0.012606840000000001,
+      "funding_apr": -4.601496600000001
+    },
+    "PYTH": {
+      "funding_8h": -1.68871e-05,
+      "funding_8h_pct": -0.00168871,
+      "funding_daily_pct": -0.00506613,
+      "funding_apr": -1.8491374500000002
+    },
+    "SUSHI": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "ILV": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "IMX": {
+      "funding_8h": -4.78962e-05,
+      "funding_8h_pct": -0.00478962,
+      "funding_daily_pct": -0.014368859999999999,
+      "funding_apr": -5.244633899999999
+    },
+    "kBONK": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "GMT": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "SUPER": {
+      "funding_8h": -4.72708e-05,
+      "funding_8h_pct": -0.00472708,
+      "funding_daily_pct": -0.01418124,
+      "funding_apr": -5.1761526
+    },
+    "USTC": {
+      "funding_8h": -2.04044e-05,
+      "funding_8h_pct": -0.00204044,
+      "funding_daily_pct": -0.00612132,
+      "funding_apr": -2.2342818
+    },
+    "NFTI": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "JUP": {
+      "funding_8h": 1.938e-07,
+      "funding_8h_pct": 1.938e-05,
+      "funding_daily_pct": 5.814e-05,
+      "funding_apr": 0.0212211
+    },
+    "kLUNC": {
+      "funding_8h": -2.00813e-05,
+      "funding_8h_pct": -0.00200813,
+      "funding_daily_pct": -0.006024389999999999,
+      "funding_apr": -2.1989023499999996
+    },
+    "RSR": {
+      "funding_8h": -3.34955e-05,
+      "funding_8h_pct": -0.0033495499999999997,
+      "funding_daily_pct": -0.01004865,
+      "funding_apr": -3.6677572499999997
+    },
+    "GALA": {
+      "funding_8h": -7.2631e-06,
+      "funding_8h_pct": -0.00072631,
+      "funding_daily_pct": -0.00217893,
+      "funding_apr": -0.79530945
+    },
+    "JTO": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "NTRN": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "ACE": {
+      "funding_8h": -5.01911e-05,
+      "funding_8h_pct": -0.00501911,
+      "funding_daily_pct": -0.01505733,
+      "funding_apr": -5.4959254500000005
+    },
+    "MAV": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "WIF": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "CAKE": {
+      "funding_8h": 5.4211e-06,
+      "funding_8h_pct": 0.0005421099999999999,
+      "funding_daily_pct": 0.0016263299999999998,
+      "funding_apr": 0.5936104499999999
+    },
+    "PEOPLE": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "ENS": {
+      "funding_8h": 6.374e-06,
+      "funding_8h_pct": 0.0006374,
+      "funding_daily_pct": 0.0019122,
+      "funding_apr": 0.6979529999999999
+    },
+    "ETC": {
+      "funding_8h": -9.2619e-06,
+      "funding_8h_pct": -0.00092619,
+      "funding_daily_pct": -0.00277857,
+      "funding_apr": -1.0141780500000002
+    },
+    "XAI": {
+      "funding_8h": -6.32116e-05,
+      "funding_8h_pct": -0.00632116,
+      "funding_daily_pct": -0.01896348,
+      "funding_apr": -6.9216702
+    },
+    "MANTA": {
+      "funding_8h": 5.8316e-06,
+      "funding_8h_pct": 0.00058316,
+      "funding_daily_pct": 0.0017494799999999999,
+      "funding_apr": 0.6385601999999999
+    },
+    "UMA": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "ONDO": {
+      "funding_8h": 4.4155e-06,
+      "funding_8h_pct": 0.00044155,
+      "funding_daily_pct": 0.0013246500000000001,
+      "funding_apr": 0.48349725000000005
+    },
+    "ALT": {
+      "funding_8h": -4.16508e-05,
+      "funding_8h_pct": -0.00416508,
+      "funding_daily_pct": -0.01249524,
+      "funding_apr": -4.5607625999999994
+    },
+    "ZETA": {
+      "funding_8h": -8.43685e-05,
+      "funding_8h_pct": -0.00843685,
+      "funding_daily_pct": -0.025310549999999998,
+      "funding_apr": -9.238350749999999
+    },
+    "DYM": {
+      "funding_8h": -6.11296e-05,
+      "funding_8h_pct": -0.006112960000000001,
+      "funding_daily_pct": -0.018338880000000002,
+      "funding_apr": -6.693691200000001
+    },
+    "MAVIA": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "W": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "PANDORA": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "STRK": {
+      "funding_8h": 4.8989e-06,
+      "funding_8h_pct": 0.00048989,
+      "funding_daily_pct": 0.00146967,
+      "funding_apr": 0.53642955
+    },
+    "PIXEL": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "AI": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "TAO": {
+      "funding_8h": -1.93726e-05,
+      "funding_8h_pct": -0.0019372600000000001,
+      "funding_daily_pct": -0.005811780000000001,
+      "funding_apr": -2.1212997000000002
+    },
+    "AR": {
+      "funding_8h": -2.25433e-05,
+      "funding_8h_pct": -0.00225433,
+      "funding_daily_pct": -0.00676299,
+      "funding_apr": -2.46849135
+    },
+    "MYRO": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "kFLOKI": {
+      "funding_8h": -2.39589e-05,
+      "funding_8h_pct": -0.00239589,
+      "funding_daily_pct": -0.00718767,
+      "funding_apr": -2.62349955
+    },
+    "BOME": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "ETHFI": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "ENA": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "MNT": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "TNSR": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "SAGA": {
+      "funding_8h": -1.99102e-05,
+      "funding_8h_pct": -0.00199102,
+      "funding_daily_pct": -0.0059730600000000005,
+      "funding_apr": -2.1801669
+    },
+    "MERL": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "HBAR": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "POPCAT": {
+      "funding_8h": -6.12459e-05,
+      "funding_8h_pct": -0.006124589999999999,
+      "funding_daily_pct": -0.018373769999999998,
+      "funding_apr": -6.706426049999999
+    },
+    "OMNI": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "EIGEN": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "REZ": {
+      "funding_8h": -3.40575e-05,
+      "funding_8h_pct": -0.00340575,
+      "funding_daily_pct": -0.01021725,
+      "funding_apr": -3.7292962500000004
+    },
+    "NOT": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "TURBO": {
+      "funding_8h": -2.71693e-05,
+      "funding_8h_pct": -0.00271693,
+      "funding_daily_pct": -0.008150790000000002,
+      "funding_apr": -2.9750383500000006
+    },
+    "BRETT": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "IO": {
+      "funding_8h": -0.0001663741,
+      "funding_8h_pct": -0.016637410000000002,
+      "funding_daily_pct": -0.04991223,
+      "funding_apr": -18.21796395
+    },
+    "ZK": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "BLAST": {
+      "funding_8h": -0.0001207084,
+      "funding_8h_pct": -0.01207084,
+      "funding_daily_pct": -0.03621252,
+      "funding_apr": -13.2175698
+    },
+    "LISTA": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "MEW": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "RENDER": {
+      "funding_8h": -3.0896e-05,
+      "funding_8h_pct": -0.0030895999999999996,
+      "funding_daily_pct": -0.009268799999999999,
+      "funding_apr": -3.3831119999999997
+    },
+    "kDOGS": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "POL": {
+      "funding_8h": -4.31595e-05,
+      "funding_8h_pct": -0.00431595,
+      "funding_daily_pct": -0.01294785,
+      "funding_apr": -4.72596525
+    },
+    "CATI": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "CELO": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "HMSTR": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "SCR": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "NEIROETH": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "kNEIRO": {
+      "funding_8h": 1.8732e-06,
+      "funding_8h_pct": 0.00018732,
+      "funding_daily_pct": 0.00056196,
+      "funding_apr": 0.2051154
+    },
+    "GOAT": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "MOODENG": {
+      "funding_8h": -0.0001090278,
+      "funding_8h_pct": -0.01090278,
+      "funding_daily_pct": -0.03270834,
+      "funding_apr": -11.938544100000001
+    },
+    "GRASS": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "PURR": {
+      "funding_8h": -1.18707e-05,
+      "funding_8h_pct": -0.00118707,
+      "funding_daily_pct": -0.0035612099999999995,
+      "funding_apr": -1.2998416499999998
+    },
+    "PNUT": {
+      "funding_8h": -5.0287e-06,
+      "funding_8h_pct": -0.00050287,
+      "funding_daily_pct": -0.00150861,
+      "funding_apr": -0.55064265
+    },
+    "XLM": {
+      "funding_8h": -1.12664e-05,
+      "funding_8h_pct": -0.00112664,
+      "funding_daily_pct": -0.00337992,
+      "funding_apr": -1.2336707999999998
+    },
+    "CHILLGUY": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "SAND": {
+      "funding_8h": -9.94505e-05,
+      "funding_8h_pct": -0.00994505,
+      "funding_daily_pct": -0.02983515,
+      "funding_apr": -10.88982975
+    },
+    "IOTA": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "ALGO": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "HYPE": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "ME": {
+      "funding_8h": -9.28306e-05,
+      "funding_8h_pct": -0.009283060000000001,
+      "funding_daily_pct": -0.02784918,
+      "funding_apr": -10.1649507
+    },
+    "MOVE": {
+      "funding_8h": -8.69107e-05,
+      "funding_8h_pct": -0.00869107,
+      "funding_daily_pct": -0.02607321,
+      "funding_apr": -9.51672165
+    },
+    "VIRTUAL": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "PENGU": {
+      "funding_8h": -3.99122e-05,
+      "funding_8h_pct": -0.00399122,
+      "funding_daily_pct": -0.01197366,
+      "funding_apr": -4.3703859000000005
+    },
+    "USUAL": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "FARTCOIN": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "AI16Z": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "AIXBT": {
+      "funding_8h": -2.30789e-05,
+      "funding_8h_pct": -0.00230789,
+      "funding_daily_pct": -0.00692367,
+      "funding_apr": -2.52713955
+    },
+    "ZEREBRO": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "BIO": {
+      "funding_8h": 6.162e-06,
+      "funding_8h_pct": 0.0006161999999999999,
+      "funding_daily_pct": 0.0018485999999999997,
+      "funding_apr": 0.6747389999999999
+    },
+    "GRIFFAIN": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "SPX": {
+      "funding_8h": -1.35849e-05,
+      "funding_8h_pct": -0.00135849,
+      "funding_daily_pct": -0.0040754699999999994,
+      "funding_apr": -1.4875465499999998
+    },
+    "S": {
+      "funding_8h": -1.25429e-05,
+      "funding_8h_pct": -0.00125429,
+      "funding_daily_pct": -0.0037628699999999998,
+      "funding_apr": -1.3734475499999999
+    },
+    "MORPHO": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "TRUMP": {
+      "funding_8h": -2.09744e-05,
+      "funding_8h_pct": -0.00209744,
+      "funding_daily_pct": -0.00629232,
+      "funding_apr": -2.2966968
+    },
+    "MELANIA": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "ANIME": {
+      "funding_8h": -2.84164e-05,
+      "funding_8h_pct": -0.0028416400000000003,
+      "funding_daily_pct": -0.008524920000000002,
+      "funding_apr": -3.111595800000001
+    },
+    "VINE": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "VVV": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "JELLY": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "BERA": {
+      "funding_8h": -0.0004004922,
+      "funding_8h_pct": -0.040049219999999996,
+      "funding_daily_pct": -0.12014765999999999,
+      "funding_apr": -43.8538959
+    },
+    "TST": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "LAYER": {
+      "funding_8h": -7.99147e-05,
+      "funding_8h_pct": -0.00799147,
+      "funding_daily_pct": -0.02397441,
+      "funding_apr": -8.750659650000001
+    },
+    "IP": {
+      "funding_8h": -2.87331e-05,
+      "funding_8h_pct": -0.00287331,
+      "funding_daily_pct": -0.00861993,
+      "funding_apr": -3.14627445
+    },
+    "OM": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "KAITO": {
+      "funding_8h": -0.0005422038,
+      "funding_8h_pct": -0.05422037999999999,
+      "funding_daily_pct": -0.16266113999999998,
+      "funding_apr": -59.371316099999994
+    },
+    "NIL": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "PAXG": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "PROMPT": {
+      "funding_8h": 2.06503e-05,
+      "funding_8h_pct": 0.0020650300000000003,
+      "funding_daily_pct": 0.00619509,
+      "funding_apr": 2.26120785
+    },
+    "BABY": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "WCT": {
+      "funding_8h": -7.47155e-05,
+      "funding_8h_pct": -0.00747155,
+      "funding_daily_pct": -0.02241465,
+      "funding_apr": -8.18134725
+    },
+    "HYPER": {
+      "funding_8h": -4.786e-06,
+      "funding_8h_pct": -0.0004786,
+      "funding_daily_pct": -0.0014357999999999999,
+      "funding_apr": -0.524067
+    },
+    "ZORA": {
+      "funding_8h": -5.20635e-05,
+      "funding_8h_pct": -0.00520635,
+      "funding_daily_pct": -0.01561905,
+      "funding_apr": -5.70095325
+    },
+    "INIT": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "DOOD": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "LAUNCHCOIN": {
+      "funding_8h": 0.0,
+      "funding_8h_pct": 0.0,
+      "funding_daily_pct": 0.0,
+      "funding_apr": 0.0
+    },
+    "NXPC": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "SOPH": {
+      "funding_8h": -2.54752e-05,
+      "funding_8h_pct": -0.00254752,
+      "funding_daily_pct": -0.0076425600000000005,
+      "funding_apr": -2.7895344
+    },
+    "RESOLV": {
+      "funding_8h": -0.000311803,
+      "funding_8h_pct": -0.031180299999999998,
+      "funding_daily_pct": -0.0935409,
+      "funding_apr": -34.1424285
+    },
+    "SYRUP": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "PUMP": {
+      "funding_8h": -1.50184e-05,
+      "funding_8h_pct": -0.00150184,
+      "funding_daily_pct": -0.00450552,
+      "funding_apr": -1.6445147999999998
+    },
+    "PROVE": {
+      "funding_8h": 6.4826e-06,
+      "funding_8h_pct": 0.00064826,
+      "funding_daily_pct": 0.0019447800000000001,
+      "funding_apr": 0.7098447
+    },
+    "YZY": {
+      "funding_8h": -0.0001906379,
+      "funding_8h_pct": -0.01906379,
+      "funding_daily_pct": -0.057191370000000005,
+      "funding_apr": -20.874850050000003
+    },
+    "XPL": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "WLFI": {
+      "funding_8h": -5.64491e-05,
+      "funding_8h_pct": -0.00564491,
+      "funding_daily_pct": -0.016934730000000002,
+      "funding_apr": -6.181176450000001
+    },
+    "LINEA": {
+      "funding_8h": 7.6706e-06,
+      "funding_8h_pct": 0.0007670600000000001,
+      "funding_daily_pct": 0.0023011800000000003,
+      "funding_apr": 0.8399307000000001
+    },
+    "SKY": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "ASTER": {
+      "funding_8h": 6.9771e-06,
+      "funding_8h_pct": 0.0006977099999999999,
+      "funding_daily_pct": 0.00209313,
+      "funding_apr": 0.7639924499999999
+    },
+    "AVNT": {
+      "funding_8h": -0.0002668893,
+      "funding_8h_pct": -0.026688930000000003,
+      "funding_daily_pct": -0.08006679000000001,
+      "funding_apr": -29.224378350000006
+    },
+    "STBL": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "0G": {
+      "funding_8h": -0.0026878736,
+      "funding_8h_pct": -0.26878736000000003,
+      "funding_daily_pct": -0.8063620800000001,
+      "funding_apr": -294.32215920000004
+    },
+    "HEMI": {
+      "funding_8h": -0.0001322977,
+      "funding_8h_pct": -0.013229769999999998,
+      "funding_daily_pct": -0.03968930999999999,
+      "funding_apr": -14.486598149999997
+    },
+    "APEX": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "2Z": {
+      "funding_8h": 2.4542e-06,
+      "funding_8h_pct": 0.00024542,
+      "funding_daily_pct": 0.00073626,
+      "funding_apr": 0.2687349
+    },
+    "ZEC": {
+      "funding_8h": -2.24369e-05,
+      "funding_8h_pct": -0.00224369,
+      "funding_daily_pct": -0.0067310700000000005,
+      "funding_apr": -2.4568405500000003
+    },
+    "MON": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "MET": {
+      "funding_8h": -2.6802e-06,
+      "funding_8h_pct": -0.00026802,
+      "funding_daily_pct": -0.00080406,
+      "funding_apr": -0.2934819
+    },
+    "MEGA": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "CC": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "ICP": {
+      "funding_8h": -2.02626e-05,
+      "funding_8h_pct": -0.00202626,
+      "funding_daily_pct": -0.006078780000000001,
+      "funding_apr": -2.2187547000000003
+    },
+    "AERO": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "STABLE": {
+      "funding_8h": 3.4072e-06,
+      "funding_8h_pct": 0.00034072000000000003,
+      "funding_daily_pct": 0.00102216,
+      "funding_apr": 0.3730884
+    },
+    "FOGO": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "LIT": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "XMR": {
+      "funding_8h": 1.25e-05,
+      "funding_8h_pct": 0.00125,
+      "funding_daily_pct": 0.00375,
+      "funding_apr": 1.36875
+    },
+    "AXS": {
+      "funding_8h": -0.0009269167,
+      "funding_8h_pct": -0.09269167,
+      "funding_daily_pct": -0.27807501,
+      "funding_apr": -101.49737865
+    },
+    "DASH": {
+      "funding_8h": -1.4606e-05,
+      "funding_8h_pct": -0.0014606,
+      "funding_daily_pct": -0.0043818,
+      "funding_apr": -1.599357
+    },
+    "SKR": {
+      "funding_8h": -5.9506e-05,
+      "funding_8h_pct": -0.0059506,
+      "funding_daily_pct": -0.0178518,
+      "funding_apr": -6.515907
+    }
+  },
+  "historical_analysis": [
+    {
+      "coin": "XYZ100",
+      "error": "No data available",
+      "records": 0
+    },
+    {
+      "coin": "GOLD",
+      "error": "No data available",
+      "records": 0
+    },
+    {
+      "coin": "SILVER",
+      "error": "No data available",
+      "records": 0
+    },
+    {
+      "coin": "TSLA",
+      "error": "No data available",
+      "records": 0
+    },
+    {
+      "coin": "NVDA",
+      "error": "No data available",
+      "records": 0
+    },
+    {
+      "coin": "INTC",
+      "error": "No data available",
+      "records": 0
+    },
+    {
+      "coin": "HOOD",
+      "error": "No data available",
+      "records": 0
+    },
+    {
+      "coin": "COIN",
+      "error": "No data available",
+      "records": 0
+    },
+    {
+      "coin": "NATGAS",
+      "error": "No data available",
+      "records": 0
+    },
+    {
+      "coin": "BTC",
+      "error": "No data available",
+      "records": 0
+    },
+    {
+      "coin": "ETH",
+      "error": "No data available",
+      "records": 0
+    },
+    {
+      "coin": "SOL",
+      "error": "No data available",
+      "records": 0
+    }
+  ]
+}

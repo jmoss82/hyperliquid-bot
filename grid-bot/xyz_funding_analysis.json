@@ -1,0 +1,122 @@
+{
+  "timestamp": "2026-01-23T01:37:57.676875+00:00",
+  "pairs": [
+    {
+      "records": 168,
+      "period_hours": 0.9999894444444445,
+      "avg_rate": 8.96556994047619e-05,
+      "avg_rate_pct": 0.00896556994047619,
+      "min_rate_pct": -0.01117816,
+      "max_rate_pct": 0.09860731,
+      "positive_count": 147,
+      "negative_count": 21,
+      "daily_rate_pct": 0.21517594987312166,
+      "annual_rate_pct": 78.53922170368939,
+      "pair": "xyz:XYZ100"
+    },
+    {
+      "records": 168,
+      "period_hours": 1.000015,
+      "avg_rate": 1.1498327380952382e-05,
+      "avg_rate_pct": 0.0011498327380952383,
+      "min_rate_pct": -0.03091132,
+      "max_rate_pct": 0.05474079,
+      "positive_count": 119,
+      "negative_count": 49,
+      "daily_rate_pct": 0.027595571780709007,
+      "annual_rate_pct": 10.072383699958786,
+      "pair": "xyz:SILVER"
+    },
+    {
+      "records": 168,
+      "period_hours": 1.0000052777777777,
+      "avg_rate": 1.7775422023809523e-05,
+      "avg_rate_pct": 0.0017775422023809523,
+      "min_rate_pct": -0.00787385,
+      "max_rate_pct": 0.01918881,
+      "positive_count": 160,
+      "negative_count": 8,
+      "daily_rate_pct": 0.042660787702985536,
+      "annual_rate_pct": 15.57118751158972,
+      "pair": "xyz:GOLD"
+    },
+    {
+      "records": 168,
+      "period_hours": 1.0000266666666666,
+      "avg_rate": 2.0882735714285715e-05,
+      "avg_rate_pct": 0.0020882735714285714,
+      "min_rate_pct": -0.02763539,
+      "max_rate_pct": 0.040321010000000004,
+      "positive_count": 128,
+      "negative_count": 40,
+      "daily_rate_pct": 0.05011722925483892,
+      "annual_rate_pct": 18.292788678016205,
+      "pair": "xyz:INTC"
+    },
+    {
+      "records": 168,
+      "period_hours": 0.9999994444444444,
+      "avg_rate": 2.5382260714285713e-05,
+      "avg_rate_pct": 0.002538226071428571,
+      "min_rate_pct": -0.01169567,
+      "max_rate_pct": 0.025509010000000002,
+      "positive_count": 157,
+      "negative_count": 11,
+      "daily_rate_pct": 0.06091745955731881,
+      "annual_rate_pct": 22.234872738421366,
+      "pair": "xyz:TSLA"
+    },
+    {
+      "records": 168,
+      "period_hours": 0.9999894444444445,
+      "avg_rate": 8.127196964285714e-05,
+      "avg_rate_pct": 0.008127196964285714,
+      "min_rate_pct": -0.00465621,
+      "max_rate_pct": 0.05846916,
+      "positive_count": 162,
+      "negative_count": 6,
+      "daily_rate_pct": 0.1950547860544877,
+      "annual_rate_pct": 71.194996909888,
+      "pair": "xyz:NVDA"
+    },
+    {
+      "records": 168,
+      "period_hours": 1.000013888888889,
+      "avg_rate": 3.169875059523809e-05,
+      "avg_rate_pct": 0.003169875059523809,
+      "min_rate_pct": -0.038194059999999995,
+      "max_rate_pct": 0.09388292000000001,
+      "positive_count": 141,
+      "negative_count": 27,
+      "daily_rate_pct": 0.07607594481822672,
+      "annual_rate_pct": 27.76771985865275,
+      "pair": "xyz:HOOD"
+    },
+    {
+      "records": 30,
+      "period_hours": 1.0000077777777778,
+      "avg_rate": 8.901490333333333e-05,
+      "avg_rate_pct": 0.008901490333333333,
+      "min_rate_pct": -0.00743119,
+      "max_rate_pct": 0.10628106,
+      "positive_count": 27,
+      "negative_count": 3,
+      "daily_rate_pct": 0.21363410640139463,
+      "annual_rate_pct": 77.97644883650905,
+      "pair": "xyz:NATGAS"
+    },
+    {
+      "records": 168,
+      "period_hours": 1.0000019444444443,
+      "avg_rate": 1.9404035714285715e-05,
+      "avg_rate_pct": 0.0019404035714285714,
+      "min_rate_pct": -0.05330472,
+      "max_rate_pct": 0.032940660000000004,
+      "positive_count": 123,
+      "negative_count": 45,
+      "daily_rate_pct": 0.04656959516229513,
+      "annual_rate_pct": 16.99790223423772,
+      "pair": "xyz:COIN"
+    }
+  ]
+}

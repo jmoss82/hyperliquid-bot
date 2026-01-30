@@ -1,0 +1,55 @@
+# CRITICAL: Environment files with private keys
+.env
+.env.*
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cursor/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+testing/
+
+# Archive folder
+archive/
+
+# Railway
+.railway/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data files (optional - uncomment if you don't want to commit data)
+# *.json
+# *.csv
