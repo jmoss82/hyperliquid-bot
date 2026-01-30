@@ -1,6 +1,6 @@
 # HIP-3 Market Maker
 
-Automated market making bot for HyperLiquid HIP-3 pairs using atomic BUY+SELL placement, strict flat-state gating, and quote freshness checks.
+Automated market making bot for HyperLiquid HIP-3 pairs using **momentum-based** atomic BUY+SELL placement, strict flat-state gating, and quote freshness checks.
 
 ---
 
@@ -33,7 +33,7 @@ LFG-bot/
 
 | File | Purpose |
 |------|---------|
-| `market_maker.py` | Primary - atomic two-sided market maker |
+| `market_maker.py` | Primary - momentum-based atomic two-sided market maker |
 | `account_monitor.py` | Monitoring - real-time position/balance tracking |
 | `spread_monitor.py` | Analysis - pre-trade spread assessment |
 | `lfg_config.py` | Loads credentials from `../grid-bot/.env.hyperliquid` |
@@ -52,17 +52,18 @@ LFG-bot/
    └── Spread > threshold? → Continue
 
 3. PLACE ATOMIC PAIR
-   └── Single API call: BUY + SELL together
+   └── Single API call: BUY + SELL together (momentum positioning)
 
 4. MONITOR (~1s)
-   ├── Both fill → Profit
-   ├── One fills → Cancel other, taker exit
+   ├── Both fill → Small spread cost (rare)
+   ├── One fills → Cancel other, taker exit with favorable momentum
    └── Neither fills → Cancel both
 
 5. REPEAT
 ```
 
 Key principles:
+- **Momentum strategy** (BUY near ask, SELL near bid to capture directional moves)
 - Atomic ordering (BUY/SELL placed together)
 - Orphan avoidance with immediate taker exits
 - Verified cancels (poll until gone)
@@ -79,7 +80,7 @@ mm = MarketMaker(
     coin="xyz:SILVER",
     spread_threshold_bps=5.0,       # Only trade when spread > 5 bps
     position_size_usd=11.0,         # $11 per trade
-    spread_position=0.3,            # 30% into spread
+    spread_position=0.3,            # 30% into spread (momentum positioning)
     max_patience_ms=300,            # 300ms patience
     max_positions=1,                # One at a time
     max_trades=999999,              # No practical limit
@@ -98,11 +99,13 @@ Additional freshness controls (defaults):
 | `ws_stale_timeout_s` | 15 | WS stale threshold before REST refresh |
 | `opportunity_queue_size` | 1 | Prevents backlog of stale opportunities |
 
-### Spread Position
+### Spread Position (Momentum Strategy)
 
-With `spread_position=0.2` and spread of $117.00 bid / $117.08 ask:
-- BUY placed at: $117.00 + ($0.08 × 0.2) = **$117.016**
-- SELL placed at: $117.08 - ($0.08 × 0.2) = **$117.064**
+With `spread_position=0.3` and spread of $117.00 bid / $117.08 ask:
+- BUY placed at: $117.08 - ($0.08 × 0.3) = **$117.056** (closer to ask - fills on upward momentum)
+- SELL placed at: $117.00 + ($0.08 × 0.3) = **$117.024** (closer to bid - fills on downward momentum)
+
+**Strategy:** Orders fill when price moves in favorable direction, avoiding adverse selection from mean reversion fills.
 
 ### Credentials
 

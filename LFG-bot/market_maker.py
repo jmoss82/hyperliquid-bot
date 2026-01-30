@@ -384,6 +384,10 @@ class MarketMaker:
         """
         Calculate buy and sell prices inside the spread.
 
+        MOMENTUM STRATEGY: Place orders to capture directional moves
+        - BUY closer to ask (fills when price rising)
+        - SELL closer to bid (fills when price falling)
+
         Args:
             bid: Current best bid
             ask: Current best ask
@@ -394,12 +398,12 @@ class MarketMaker:
         mid = (bid + ask) / 2
         spread = ask - bid
 
-        # Place orders inside the spread
-        # spread_position = 0 means at bid/ask
+        # Place orders to capture momentum (FLIPPED from mean reversion)
+        # spread_position = 0 means at ask/bid (reversed)
         # spread_position = 0.5 means at mid
-        # spread_position = 0.3 means 30% toward mid from bid/ask
-        buy_price = bid + (spread * self.spread_position)
-        sell_price = ask - (spread * self.spread_position)
+        # spread_position = 0.3 means 30% away from ask/bid into spread
+        buy_price = ask - (spread * self.spread_position)
+        sell_price = bid + (spread * self.spread_position)
 
         return buy_price, sell_price
 
