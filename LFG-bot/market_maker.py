@@ -32,6 +32,7 @@ from lfg_config import WALLET_ADDRESS, PRIVATE_KEY, ACCOUNT_ADDRESS
 sys.path.insert(0, str(Path(__file__).parent.parent / "grid-bot"))
 
 from xyz_client import XYZClient, OrderSide, OrderStatus as XYZOrderStatus
+from candle_builder import CandleBuilder
 
 
 @dataclass
@@ -49,11 +50,12 @@ class TrackedOrder:
 
 @dataclass
 class Opportunity:
-    """A market making opportunity"""
+    """A market making opportunity with trend direction"""
     bid: float
     ask: float
     spread_bps: float
     timestamp: float
+    trend: str  # 'UP', 'DOWN', 'FLAT', or 'UNKNOWN'
 
 
 class MarketMaker:
@@ -104,8 +106,10 @@ class MarketMaker:
         # Stats
         self.opportunities_seen = 0
         self.trades_attempted = 0
-        self.both_filled = 0
+        self.both_filled = 0  # Keep for backward compatibility (won't be used in Phase 2)
         self.one_filled = 0
+        self.long_entries = 0  # PHASE 2: Track directional entries
+        self.short_entries = 0  # PHASE 2: Track directional entries
         self.total_profit = 0.0
         self.total_loss = 0.0
 
@@ -145,6 +149,13 @@ class MarketMaker:
         self._trade_task = None
         self._fills_task = None
         self._watchdog_task = None
+
+        # WMA trend detection (Phase 1: monitoring only)
+        self.candle_builder = CandleBuilder(candle_interval_seconds=5, max_candles=100)
+        self.wma_period = 10
+        self.wma_price_type = 'weighted_close'  # (H+L+C+C)/4
+        self.wma_threshold = 0.0005  # 0.05% buffer for FLAT detection
+        self.last_trend = "UNKNOWN"
 
     def _normalize_status(self, status: Optional[XYZOrderStatus]) -> str:
         """Normalize order status to internal uppercase strings."""
@@ -224,7 +235,7 @@ class MarketMaker:
                         continue
                     if not await self.ensure_fresh_quote("trade_worker"):
                         continue
-                    await self.place_both_sides(refreshed_opportunity)
+                    await self.place_order(refreshed_opportunity)
             except Exception as e:
                 print(f"[TRADE WORKER] Error: {e}", flush=True)
             finally:
@@ -384,6 +395,10 @@ class MarketMaker:
         """
         Calculate buy and sell prices inside the spread.
 
+        ⚠️ DEAD CODE (Phase 2): No longer used - kept as backup
+        This was used for atomic two-sided placement. Now replaced by
+        one-sided logic in place_order() that determines price based on trend.
+
         MOMENTUM STRATEGY: Place orders to capture directional moves
         - BUY closer to ask (fills when price rising)
         - SELL closer to bid (fills when price falling)
@@ -409,7 +424,9 @@ class MarketMaker:
 
     def should_enter(self, bid: float, ask: float) -> Optional[Opportunity]:
         """
-        Check if we should enter a market making position.
+        Check if we should enter a position based on trend and spread.
+
+        PHASE 2: Now includes WMA trend check - only enter on UP or DOWN trends.
 
         Returns:
             Opportunity if criteria met, None otherwise
@@ -446,22 +463,30 @@ class MarketMaker:
         if spread_bps < self.spread_threshold_bps:
             return None
 
+        # PHASE 2: Check trend - only enter on clear UP or DOWN
+        trend = self.get_trend()
+        if trend not in ['UP', 'DOWN']:
+            # Skip FLAT (price on WMA line) and UNKNOWN (insufficient data)
+            return None
+
         return Opportunity(
             bid=bid,
             ask=ask,
             spread_bps=spread_bps,
-            timestamp=datetime.now(timezone.utc).timestamp()
+            timestamp=datetime.now(timezone.utc).timestamp(),
+            trend=trend  # PHASE 2: Include trend in opportunity
         )
 
-    async def place_both_sides(self, opportunity: Opportunity):
+    async def place_order(self, opportunity: Opportunity):
         """
-        Place limit orders on both sides of the spread using ATOMIC batch placement.
-        
-        Strategy: Orphan avoidance first. If both orders aren't cleanly accepted,
-        cancel everything immediately and move on.
+        Place single-sided order based on trend direction.
+
+        PHASE 2: One-sided momentum strategy
+        - Enter LONG when trend is UP (buy closer to ask)
+        - Enter SHORT when trend is DOWN (sell closer to bid)
 
         Args:
-            opportunity: The market making opportunity
+            opportunity: The market making opportunity with trend
         """
         self.opportunities_seen += 1
 
@@ -476,139 +501,178 @@ class MarketMaker:
                 return
 
         # ====================================================================================
-        # FLAT GATE: Verify we're completely flat before placing new orders
+        # FLAT GATE: Verify we're completely flat before placing new order
         # ====================================================================================
         is_flat = await self.ensure_flat()
         if not is_flat:
-            print(f"[BLOCKED] Cannot place orders - not flat. Skipping this opportunity.", flush=True)
+            print(f"[BLOCKED] Cannot place order - not flat. Skipping this opportunity.", flush=True)
             return
 
         # ====================================================================================
         # FRESH QUOTE GATE: Avoid placing orders on stale data
         # ====================================================================================
-        if not await self.ensure_fresh_quote("place_both_sides"):
-            print(f"[BLOCKED] Cannot place orders - stale quote.", flush=True)
+        if not await self.ensure_fresh_quote("place_order"):
+            print(f"[BLOCKED] Cannot place order - stale quote.", flush=True)
             return
 
         # ====================================================================================
-        # Calculate prices and size
+        # Determine side and price from trend
         # ====================================================================================
-        buy_price, sell_price = self.calculate_order_prices(
-            opportunity.bid,
-            opportunity.ask
-        )
+        spread = opportunity.ask - opportunity.bid
 
-        # Calculate size based on buy price to ensure notional >= $10
-        position_size = self.position_size_usd / buy_price
+        if opportunity.trend == 'UP':
+            # Uptrend: Place BUY order (closer to ask to catch momentum)
+            side = OrderSide.BUY
+            price = opportunity.ask - (spread * self.spread_position)
+        elif opportunity.trend == 'DOWN':
+            # Downtrend: Place SELL order (closer to bid to catch momentum)
+            side = OrderSide.SELL
+            price = opportunity.bid + (spread * self.spread_position)
+        else:
+            print(f"[ERROR] Invalid trend for entry: {opportunity.trend}", flush=True)
+            return
+
+        # Calculate size to meet minimum notional
+        position_size = self.position_size_usd / price
 
         print(f"\n{'='*80}", flush=True)
-        print(f"[OPPORTUNITY #{self.opportunities_seen}] {datetime.now(timezone.utc).strftime('%H:%M:%S')}", flush=True)
+        print(f"[{opportunity.trend} TREND #{self.opportunities_seen}] {datetime.now(timezone.utc).strftime('%H:%M:%S')}", flush=True)
         print(f"{'='*80}", flush=True)
         print(f"Spread: {opportunity.spread_bps:.2f} bps | Bid: ${opportunity.bid:.2f} | Ask: ${opportunity.ask:.2f}", flush=True)
-        print(f"Placing ATOMIC: BUY ${buy_price:.2f} | SELL ${sell_price:.2f} | Size: {position_size:.4f}", flush=True)
+        print(f"Placing {side.value}: ${price:.2f} | Size: {position_size:.4f}", flush=True)
         print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}", flush=True)
 
         # ====================================================================================
-        # ATOMIC PLACEMENT: Both orders in single API call
+        # PLACE SINGLE ORDER: Post-only limit order
         # ====================================================================================
         try:
-            result = self.client.place_order_pair(
+            order = self.client.place_limit_order(
                 coin=self.coin,
-                buy_price=buy_price,
-                sell_price=sell_price,
+                side=side,
+                price=price,
                 size=position_size,
+                reduce_only=False,
+                post_only=True,  # Maker order only
                 dry_run=self.dry_run
             )
         except Exception as e:
-            print(f"[ERROR] Atomic placement failed: {e}", flush=True)
+            print(f"[ERROR] Order placement failed: {e}", flush=True)
             return
 
         # ====================================================================================
-        # CHECK RESPONSE: If not both accepted, cancel everything immediately
+        # CHECK RESPONSE: If rejected, just move on (no cleanup needed)
         # ====================================================================================
-        if not result['success']:
-            print(f"[ABORT] Not both accepted: BUY={result['buy_status']}, SELL={result['sell_status']}", flush=True)
-            
-            # Cancel any order that was accepted
-            if result['buy'] and result['buy'].order_id:
-                print(f"[CLEANUP] Cancelling orphan BUY {result['buy'].order_id}", flush=True)
-                await self.verified_cancel(result['buy'].order_id)
-            if result['sell'] and result['sell'].order_id:
-                print(f"[CLEANUP] Cancelling orphan SELL {result['sell'].order_id}", flush=True)
-                await self.verified_cancel(result['sell'].order_id)
-            
-            # Verify flat before moving on
-            await self.ensure_flat()
+        if not order or not order.order_id:
+            print(f"[REJECTED] Order was rejected (likely post-only violation)", flush=True)
             return
 
-        # ====================================================================================
-        # BOTH ACCEPTED: Track orders and monitor for fills
-        # ====================================================================================
-        print(f"[SUCCESS] Both orders accepted!", flush=True)
-        
+        print(f"[SUCCESS] Order accepted! ID: {order.order_id}", flush=True)
+
         self.trades_attempted += 1
         self.last_placement_time = time.time()
-        
-        buy_order = result['buy']
-        sell_order = result['sell']
-        
-        # Check if either already filled during placement
-        buy_filled = result['buy_status'] == 'filled'
-        sell_filled = result['sell_status'] == 'filled'
-        
-        if buy_filled and sell_filled:
-            # Both filled instantly - profit!
-            profit = (sell_order.price - buy_order.price) * position_size
-            self.total_profit += max(0, profit)
-            self.both_filled += 1
-            print(f"\n{'*'*60}", flush=True)
-            print(f"[INSTANT WIN] Both filled! Profit: ${profit:.4f}", flush=True)
-            print(f"{'*'*60}\n", flush=True)
+
+        # Track entry side for stats
+        if side == OrderSide.BUY:
+            self.long_entries += 1
+        else:
+            self.short_entries += 1
+
+        # Check if already filled during placement
+        if hasattr(order, 'status') and order.status and 'filled' in str(order.status).lower():
+            print(f"[INSTANT FILL] Order filled immediately!", flush=True)
+            self.one_filled += 1
             return
-        
-        if buy_filled and not sell_filled:
-            # BUY filled, SELL resting - cancel SELL, exit LONG
-            print(f"[PARTIAL] BUY filled, SELL resting - aborting", flush=True)
-            await self.verified_cancel(sell_order.order_id)
-            await self.exit_position_fast(OrderSide.BUY, buy_order.price, position_size)
-            return
-        
-        if sell_filled and not buy_filled:
-            # SELL filled, BUY resting - cancel BUY, exit SHORT
-            print(f"[PARTIAL] SELL filled, BUY resting - aborting", flush=True)
-            await self.verified_cancel(buy_order.order_id)
-            await self.exit_position_fast(OrderSide.SELL, sell_order.price, position_size)
-            return
-        
-        # Both resting - track and monitor
-        buy_tracked = TrackedOrder(
-            side=OrderSide.BUY,
-            price=buy_order.price,
+
+        # Track the order
+        tracked = TrackedOrder(
+            side=side,
+            price=price,
             size=position_size,
-            order_id=buy_order.order_id,
+            order_id=order.order_id,
             status="OPEN",
             timestamp=datetime.now(timezone.utc).timestamp()
         )
-        sell_tracked = TrackedOrder(
-            side=OrderSide.SELL,
-            price=sell_order.price,
-            size=position_size,
-            order_id=sell_order.order_id,
-            status="OPEN",
-            timestamp=datetime.now(timezone.utc).timestamp()
-        )
-        self.active_orders = [buy_tracked, sell_tracked]
+        self.active_orders = [tracked]
         self.open_positions = 1
-        
+
         # ====================================================================================
         # MONITOR: Short timeout, then cancel if not filled
         # ====================================================================================
-        await self.monitor_pair_fast(buy_tracked, sell_tracked)
+        await self.monitor_order(tracked)
+
+    async def monitor_order(self, order: TrackedOrder):
+        """
+        Monitor single order for fill.
+
+        PHASE 2: Simplified monitoring for one-sided entries.
+        - If fills: Immediately exit with exit_position_fast()
+        - If doesn't fill: Cancel and move on
+
+        Args:
+            order: The tracked order to monitor
+        """
+        TIMEOUT_SECONDS = 1.0
+        CHECK_INTERVAL = 0.2
+
+        start_time = time.time()
+        order_id = order.order_id
+
+        print(f"[MONITOR] Watching {order.side.value} order {order_id} for {TIMEOUT_SECONDS}s", flush=True)
+
+        while time.time() - start_time < TIMEOUT_SECONDS:
+            await asyncio.sleep(CHECK_INTERVAL)
+
+            try:
+                # Check if order is still on book
+                open_orders = self.client.get_open_orders(self.coin)
+                open_ids = {o.order_id for o in open_orders}
+
+                if order_id not in open_ids:
+                    # Order filled - immediately exit the position!
+                    print(f"[FILLED] {order.side.value} filled @ ${order.price:.2f}", flush=True)
+                    self.one_filled += 1
+                    self.active_orders.clear()
+                    self.open_positions = 0
+
+                    # Exit the position immediately (fast taker exit)
+                    await self.exit_position_fast(order.side, order.price, order.size)
+                    return
+
+            except Exception as e:
+                print(f"[MONITOR] Error checking order: {e}", flush=True)
+
+        # ====================================================================================
+        # TIMEOUT: Cancel order
+        # ====================================================================================
+        print(f"[TIMEOUT] Order didn't fill in {TIMEOUT_SECONDS}s - cancelling", flush=True)
+        await self.verified_cancel(order_id)
+
+        # Check if it filled during cancel
+        try:
+            position = self.client.get_position(self.coin)
+            if position and abs(position.size) > 0:
+                print(f"[TIMEOUT] Position detected ({position.size:.4f}) - filled during cancel", flush=True)
+                self.one_filled += 1
+
+                # Exit the position immediately (fast taker exit)
+                await self.exit_position_fast(order.side, order.price, abs(position.size))
+        except Exception as e:
+            print(f"[TIMEOUT] Error checking position: {e}", flush=True)
+
+        self.active_orders.clear()
+        self.open_positions = 0
+
+        # Final flat check
+        await self.ensure_flat()
 
     async def monitor_pair_fast(self, buy: TrackedOrder, sell: TrackedOrder):
         """
         Monitor a pair of orders with a SHORT timeout.
-        
+
+        ⚠️ DEAD CODE (Phase 2): No longer used - kept as backup
+        This was used for atomic two-sided placement. Now replaced by
+        monitor_order() which monitors a single order.
+
         Philosophy: If not both filled within 1 second, cancel everything.
         Data shows: trades that complete in ≤1s are winners, longer = losers.
         """
@@ -877,6 +941,39 @@ class MarketMaker:
         except Exception as e:
             print(f"[WARN] Failed to refresh quotes: {e}", flush=True)
         return False
+
+    def get_trend(self) -> str:
+        """
+        Get current trend from WMA analysis.
+
+        Returns:
+            'UP' if price above WMA, 'DOWN' if below, 'FLAT' if on line, 'UNKNOWN' if insufficient data
+        """
+        return self.candle_builder.get_trend(
+            period=self.wma_period,
+            price_type=self.wma_price_type,
+            threshold=self.wma_threshold
+        )
+
+    def get_wma_stats(self) -> dict:
+        """Get current WMA statistics for logging/debugging."""
+        wma = self.candle_builder.calculate_wma(self.wma_period, self.wma_price_type)
+        current_price = None
+
+        if self.candle_builder.current_candle:
+            if self.wma_price_type == 'weighted_close':
+                current_price = self.candle_builder.current_candle.weighted_close()
+            elif self.wma_price_type == 'mid_price':
+                current_price = self.candle_builder.current_candle.mid_price()
+            else:
+                current_price = self.candle_builder.current_candle.close
+
+        return {
+            'wma': wma,
+            'current_price': current_price,
+            'trend': self.get_trend(),
+            'total_candles': len(self.candle_builder.candles)
+        }
 
     async def exit_orphan(self, filled_order: TrackedOrder):
         """
@@ -1281,6 +1378,10 @@ class MarketMaker:
         print(f"  Spread position:  {self.spread_position:.1%}")
         print(f"  Max positions:    {self.max_positions}")
         print(f"  Trade cooldown:   {self.min_trade_interval:.0f}s")
+        print(f"\nWMA Trend Detection (Phase 2: One-Sided Entries):")
+        print(f"  WMA Period:       {self.wma_period}")
+        print(f"  Price Type:       {self.wma_price_type}")
+        print(f"  Trend Threshold:  {self.wma_threshold:.2%}")
         print(f"\nSafety Limits:")
         print(f"  Max trades:       {self.max_trades}")
         print(f"  Max loss:         ${self.max_loss:.2f}")
@@ -1326,6 +1427,27 @@ class MarketMaker:
                                 self.current_mid = (bid + ask) / 2
                                 self.last_book_update_ts = time.monotonic()
 
+                                # ========================================
+                                # PHASE 1: WMA Trend Monitoring
+                                # ========================================
+                                # Update candle builder with new tick data
+                                completed_candle = self.candle_builder.update(bid, ask)
+
+                                # When a candle completes (every 5s), check for trend changes
+                                if completed_candle:
+                                    current_trend = self.get_trend()
+                                    wma_stats = self.get_wma_stats()
+
+                                    # Log trend changes
+                                    if current_trend != self.last_trend:
+                                        print(f"\n{'='*60}", flush=True)
+                                        print(f"[WMA TREND CHANGE] {self.last_trend} → {current_trend}", flush=True)
+                                        if wma_stats['wma'] and wma_stats['current_price']:
+                                            print(f"Price: ${wma_stats['current_price']:.3f} | WMA: ${wma_stats['wma']:.3f}", flush=True)
+                                        print(f"Candles: {wma_stats['total_candles']}", flush=True)
+                                        print(f"{'='*60}\n", flush=True)
+                                        self.last_trend = current_trend
+
                                 # Calculate spread for logging
                                 spread_abs = ask - bid
                                 spread_bps = (spread_abs / self.current_mid) * 10000
@@ -1336,9 +1458,15 @@ class MarketMaker:
                                 self._update_count += 1
 
                                 if self._update_count % 100 == 0:
+                                    # Enhanced logging with WMA info
+                                    wma_stats = self.get_wma_stats()
+                                    wma_str = f"WMA: ${wma_stats['wma']:.3f}" if wma_stats['wma'] else "WMA: Building..."
+                                    trend_str = wma_stats['trend']
+
                                     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] "
                                           f"Bid: ${bid:.2f} | Ask: ${ask:.2f} | "
-                                          f"Spread: ${spread_abs:.2f} ({spread_bps:.2f} bps)", flush=True)
+                                          f"Spread: ${spread_abs:.2f} ({spread_bps:.2f} bps) | "
+                                          f"{wma_str} | Trend: {trend_str}", flush=True)
 
                                 # Check for opportunity
                                 opportunity = self.should_enter(bid, ask)
@@ -1434,8 +1562,12 @@ class MarketMaker:
         print("\nPERFORMANCE STATS:")
         print(f"  Opportunities seen:  {self.opportunities_seen}")
         print(f"  Trades attempted:    {self.trades_attempted}")
-        print(f"  Both sides filled:   {self.both_filled}")
-        print(f"  One side filled:     {self.one_filled}")
+        print(f"\nPHASE 2 - Directional Entries:")
+        print(f"  LONG entries:        {self.long_entries}")
+        print(f"  SHORT entries:       {self.short_entries}")
+        print(f"  Fills:               {self.one_filled}")
+        if self.both_filled > 0:
+            print(f"  (Legacy both-fills:  {self.both_filled})")
         print(f"\nORPHAN EXIT STATS:")
         print(f"  Orphan exits attempted: {self.orphan_exits_attempted}")
         print(f"  Orphan exits filled:    {self.orphan_exits_filled}")

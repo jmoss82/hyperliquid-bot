@@ -1,6 +1,6 @@
 # HIP-3 Market Maker
 
-Automated market making bot for HyperLiquid HIP-3 pairs using **momentum-based** atomic BUY+SELL placement, strict flat-state gating, and quote freshness checks.
+Automated market making bot for HyperLiquid HIP-3 pairs using **WMA trend-based one-sided entries**, momentum positioning, strict flat-state gating, and immediate fast exits.
 
 ---
 
@@ -24,7 +24,9 @@ python market_maker.py
 
 ```
 LFG-bot/
-├── market_maker.py      # Main trading bot
+├── market_maker.py      # Main trading bot (WMA trend-based)
+├── candle_builder.py    # 5-second candle builder and WMA calculator
+├── wma_tester.py        # Live WMA signal testing (no real orders)
 ├── account_monitor.py   # Position/balance monitoring
 ├── spread_monitor.py    # Spread analysis tool
 ├── lfg_config.py        # Credentials loader
@@ -33,39 +35,49 @@ LFG-bot/
 
 | File | Purpose |
 |------|---------|
-| `market_maker.py` | Primary - momentum-based atomic two-sided market maker |
+| `market_maker.py` | Primary - WMA trend-based one-sided market maker |
+| `candle_builder.py` | Core - Builds 5s candles from tick data, calculates WMA |
+| `wma_tester.py` | Testing - Live trend signal monitoring without real trades |
 | `account_monitor.py` | Monitoring - real-time position/balance tracking |
 | `spread_monitor.py` | Analysis - pre-trade spread assessment |
 | `lfg_config.py` | Loads credentials from `../grid-bot/.env.hyperliquid` |
 
 ---
 
-## Strategy (Strict Cycle)
+## Strategy (WMA Trend-Based Cycle)
 
 ```
 1. ENSURE FLAT
    ├── Cancel all open orders (verified)
-   ├── Exit any orphan positions (taker)
+   ├── Exit any positions (taker)
    └── Verify: 0 orders, 0 positions
 
-2. DETECT OPPORTUNITY
-   └── Spread > threshold? → Continue
+2. BUILD CANDLES & DETECT TREND
+   ├── 5-second OHLC candles from streaming bid/ask
+   ├── Calculate 10-period WMA using (H+L+C+C)/4
+   └── Determine trend: UP / DOWN / FLAT / UNKNOWN
 
-3. PLACE ATOMIC PAIR
-   └── Single API call: BUY + SELL together (momentum positioning)
+3. DETECT OPPORTUNITY
+   ├── Spread > 6 bps? → Continue
+   ├── Trend = UP or DOWN? → Continue
+   └── Trend = FLAT or UNKNOWN? → Skip
 
-4. MONITOR (~1s)
-   ├── Both fill → Small spread cost (rare)
-   ├── One fills → Cancel other, taker exit with favorable momentum
-   └── Neither fills → Cancel both
+4. PLACE ONE-SIDED ORDER
+   ├── Trend UP → Place BUY (closer to ask)
+   └── Trend DOWN → Place SELL (closer to bid)
 
-5. REPEAT
+5. MONITOR (~1s)
+   ├── Order fills → Immediate fast exit (taker)
+   └── Timeout → Cancel order
+
+6. REPEAT
 ```
 
 Key principles:
-- **Momentum strategy** (BUY near ask, SELL near bid to capture directional moves)
-- Atomic ordering (BUY/SELL placed together)
-- Orphan avoidance with immediate taker exits
+- **WMA trend detection** (10-period on 5-second candles using weighted close)
+- **One-sided directional entries** (LONG on uptrend, SHORT on downtrend)
+- **Momentum positioning** (BUY near ask, SELL near bid)
+- **Immediate fast exits** (cross spread as taker after fill)
 - Verified cancels (poll until gone)
 - Quote freshness gate to prevent stale placements
 
@@ -81,7 +93,7 @@ mm = MarketMaker(
     spread_threshold_bps=6.0,       # Only trade when spread > 6 bps
     position_size_usd=11.0,         # $11 per trade
     spread_position=0.2,            # 20% into spread (closer to edges)
-    max_patience_ms=300,            # 300ms patience
+    max_patience_ms=300,            # 300ms patience (legacy, not used)
     max_positions=1,                # One at a time
     max_trades=999999,              # No practical limit
     max_loss=5.0,                   # Stop if lose $5
@@ -92,26 +104,74 @@ mm = MarketMaker(
 )
 ```
 
-Additional freshness controls (defaults):
+### WMA Trend Detection (Configured in __init__)
+
+| Parameter | Current Value | Description |
+|-----------|---------------|-------------|
+| `wma_period` | 10 | Number of candles for WMA calculation |
+| `wma_price_type` | `weighted_close` | Uses (H+L+C+C)/4 for each candle |
+| `wma_threshold` | 0.0005 (0.05%) | Buffer to avoid whipsaw on WMA line |
+| Candle interval | 5 seconds | OHLC candle frequency |
+
+**Trend Rules:**
+- **UP:** Price > WMA + 0.05% threshold → Enter LONG
+- **DOWN:** Price < WMA - 0.05% threshold → Enter SHORT
+- **FLAT:** Price within ±0.05% of WMA → Skip (no clear trend)
+- **UNKNOWN:** Less than 10 candles → Skip (insufficient data)
+
+### Additional Controls
+
 | Parameter | Default | Notes |
 |-----------|---------|-------|
 | `max_quote_age_ms` | 1200 | Max age for a quote before skipping placement |
 | `ws_stale_timeout_s` | 15 | WS stale threshold before REST refresh |
 | `opportunity_queue_size` | 1 | Prevents backlog of stale opportunities |
 
-### Spread Position (Momentum Strategy)
+### Spread Position (One-Sided Momentum)
 
 With `spread_position=0.2` and spread of $117.00 bid / $117.08 ask:
-- BUY placed at: $117.08 - ($0.08 × 0.2) = **$117.064** (closer to ask - fills on upward momentum)
-- SELL placed at: $117.00 + ($0.08 × 0.2) = **$117.016** (closer to bid - fills on downward momentum)
 
-**Strategy:** Orders positioned closer to spread edges (20%) to capture cleaner directional moves. Wider spreads (6+ bps) provide better signal quality.
+**When Trend = UP (Enter LONG):**
+- BUY placed at: $117.08 - ($0.08 × 0.2) = **$117.064** (20% from ask edge)
+- Positioned to fill on upward momentum
+
+**When Trend = DOWN (Enter SHORT):**
+- SELL placed at: $117.00 + ($0.08 × 0.2) = **$117.016** (20% from bid edge)
+- Positioned to fill on downward momentum
+
+**Strategy:** One-sided orders positioned 20% into the spread from the edge. Closer to edges (20% vs 30%) reduces post-only rejections while still capturing momentum. Wider minimum spread (6+ bps) provides better signal quality and breathing room for post-only orders.
 
 ### Credentials
 
 Expected environment variables (loaded by `lfg_config.py`):
 - `HL_WALLET_ADDRESS` / `HL_PRIVATE_KEY`
 - `HL_ACCOUNT_ADDRESS` (optional)
+
+---
+
+## Testing WMA Signals (No Real Orders)
+
+Use `wma_tester.py` to observe live trend signals without placing real orders:
+
+```bash
+cd LFG-bot
+python wma_tester.py
+```
+
+**What it shows:**
+- Real-time 5-second candle building
+- WMA calculations and current trend (UP/DOWN/FLAT/UNKNOWN)
+- Entry signals that would trigger (🟢 LONG / 🔴 SHORT)
+- Trend changes with price vs WMA values
+- Signal statistics (LONG vs SHORT distribution)
+
+**Useful for:**
+- Validating WMA settings before live trading
+- Observing signal quality during different market conditions
+- Testing new WMA periods or thresholds
+- Understanding when the bot would enter
+
+Press `Ctrl+C` to stop and see statistics.
 
 ---
 
@@ -235,11 +295,30 @@ For lowest latency:
 
 ## Local Development
 
-Run locally for testing:
+**Run live bot locally:**
 
 ```bash
 cd LFG-bot
 python market_maker.py
 ```
 
+**Test WMA signals without trading:**
+
+```bash
+cd LFG-bot
+python wma_tester.py
+```
+
 Credentials loaded from `../grid-bot/.env.hyperliquid`
+
+**Testing new WMA settings:**
+
+Edit `wma_tester.py` to try different configurations:
+```python
+tester = WMATesterV2(
+    wma_period=15,              # Try different periods
+    spread_threshold_bps=8.0,   # Test wider spreads
+    price_type='mid_price',     # Try (H+L)/2 instead
+    threshold=0.001,            # Adjust FLAT buffer
+)
+```
