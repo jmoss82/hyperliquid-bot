@@ -1,18 +1,28 @@
 """
 Automated Market Making Bot for HIP-3 Pairs
 
-Strategy:
-1. Monitor orderbook spread in real-time
-2. When spread > threshold, place limit orders on both sides
-3. If both fill → profit from spread + maker rebates
-4. If one fills → quickly exit inventory to minimize risk
-5. Repeat continuously
+Strategy (Phase 3: WMA Trend-Based with Smart Exits):
+1. Build 5-second candles from streaming bid/ask data
+2. Calculate 10-period WMA using weighted close (H+L+C+C)/4
+3. Detect trend: UP (price > WMA) or DOWN (price < WMA)
+4. Place ONE-SIDED order based on trend direction:
+   - Uptrend → BUY order (closer to ask)
+   - Downtrend → SELL order (closer to bid)
+5. Monitor position for exit conditions:
+   - Stop Loss: Exit as taker if P&L <= -10 bps
+   - Take Profit: Exit as maker if P&L >= +20 bps
+   - Trend Reversal: Exit as maker if trend flips (UP↔DOWN)
+   - Max Hold Time: Exit as maker if held > 120s
+6. Repeat continuously
 
 Key parameters:
 - spread_threshold_bps: Minimum spread to enter (default: 6 bps)
-- position_size_usd: Size per trade (default: $10)
-- spread_position: Where to place orders (0=ask/bid, 0.5=mid, default: 0.2)
-- max_patience_ms: How long to wait before repricing (default: 300ms)
+- position_size_usd: Size per trade (default: $11)
+- spread_position: Where to place orders (0=edge, 0.5=mid, default: 0.2)
+- min_trade_interval: Cooldown between trades (default: 5s)
+- take_profit_bps: Take profit threshold (default: +20 bps)
+- stop_loss_bps: Stop loss threshold (default: -10 bps)
+- max_hold_time: Maximum position hold time (default: 120s)
 """
 import asyncio
 import websockets
@@ -150,12 +160,18 @@ class MarketMaker:
         self._fills_task = None
         self._watchdog_task = None
 
-        # WMA trend detection (Phase 1: monitoring only)
+        # WMA trend detection (Phase 2: One-sided entries)
         self.candle_builder = CandleBuilder(candle_interval_seconds=5, max_candles=100)
         self.wma_period = 10
         self.wma_price_type = 'weighted_close'  # (H+L+C+C)/4
         self.wma_threshold = 0.0005  # 0.05% buffer for FLAT detection
         self.last_trend = "UNKNOWN"
+
+        # Position management parameters (Phase 3: Smart exits)
+        self.take_profit_bps = 20.0      # Exit at +20 bps profit
+        self.stop_loss_bps = 10.0        # Exit at -10 bps loss
+        self.max_hold_time = 120.0       # Max seconds to hold position
+        self.position_check_interval = 0.5  # Check every 0.5 seconds
 
     def _normalize_status(self, status: Optional[XYZOrderStatus]) -> str:
         """Normalize order status to internal uppercase strings."""
@@ -604,8 +620,8 @@ class MarketMaker:
         """
         Monitor single order for fill.
 
-        PHASE 2: Simplified monitoring for one-sided entries.
-        - If fills: Immediately exit with exit_position_fast()
+        PHASE 3: Monitor entry order, then hand off to position monitoring.
+        - If fills: Start position monitoring (TP/SL/trend/timeout)
         - If doesn't fill: Cancel and move on
 
         Args:
@@ -628,14 +644,14 @@ class MarketMaker:
                 open_ids = {o.order_id for o in open_orders}
 
                 if order_id not in open_ids:
-                    # Order filled - immediately exit the position!
+                    # Order filled - start position monitoring!
                     print(f"[FILLED] {order.side.value} filled @ ${order.price:.2f}", flush=True)
                     self.one_filled += 1
                     self.active_orders.clear()
-                    self.open_positions = 0
+                    self.open_positions = 1
 
-                    # Exit the position immediately (fast taker exit)
-                    await self.exit_position_fast(order.side, order.price, order.size)
+                    # PHASE 3: Monitor position with TP/SL/trend/timeout
+                    await self.monitor_position(order.side, order.price, order.size)
                     return
 
             except Exception as e:
@@ -654,8 +670,9 @@ class MarketMaker:
                 print(f"[TIMEOUT] Position detected ({position.size:.4f}) - filled during cancel", flush=True)
                 self.one_filled += 1
 
-                # Exit the position immediately (fast taker exit)
-                await self.exit_position_fast(order.side, order.price, abs(position.size))
+                # PHASE 3: Monitor position with TP/SL/trend/timeout
+                await self.monitor_position(order.side, order.price, abs(position.size))
+                return
         except Exception as e:
             print(f"[TIMEOUT] Error checking position: {e}", flush=True)
 
@@ -664,6 +681,229 @@ class MarketMaker:
 
         # Final flat check
         await self.ensure_flat()
+
+    async def monitor_position(self, entry_side: OrderSide, entry_price: float, size: float):
+        """
+        Monitor an open position for exit conditions.
+
+        PHASE 3: Smart exit logic with multiple conditions.
+        Priority order:
+        1. Stop Loss (-10 bps) → Taker exit immediately
+        2. Take Profit (+20 bps) → Maker exit
+        3. Trend Reversal (UP↔DOWN) → Maker exit
+        4. Max Hold Time (120s) → Maker exit
+
+        Args:
+            entry_side: The side we entered (BUY for long, SELL for short)
+            entry_price: The price we entered at
+            size: Position size
+        """
+        position_type = "LONG" if entry_side == OrderSide.BUY else "SHORT"
+        entry_trend = self.last_trend  # Remember trend at entry
+
+        print(f"\n{'='*60}", flush=True)
+        print(f"[POSITION] {position_type} @ ${entry_price:.2f} | Size: {size:.4f}", flush=True)
+        print(f"[POSITION] TP: +{self.take_profit_bps} bps | SL: -{self.stop_loss_bps} bps | Max: {self.max_hold_time}s", flush=True)
+        print(f"{'='*60}\n", flush=True)
+
+        entry_time = time.time()
+
+        while True:
+            await asyncio.sleep(self.position_check_interval)
+
+            # Get current market data
+            bid = self.current_bid
+            ask = self.current_ask
+            mid = self.current_mid
+
+            if not all([bid, ask, mid]):
+                continue
+
+            # Calculate current P&L in bps
+            if entry_side == OrderSide.BUY:
+                # Long: profit when price goes up
+                pnl_dollars = (mid - entry_price) * size
+                pnl_bps = ((mid - entry_price) / entry_price) * 10000
+            else:
+                # Short: profit when price goes down
+                pnl_dollars = (entry_price - mid) * size
+                pnl_bps = ((entry_price - mid) / entry_price) * 10000
+
+            # Get current trend
+            current_trend = self.get_trend()
+            elapsed = time.time() - entry_time
+
+            # ====================================================================================
+            # CONDITION 1: STOP LOSS (highest priority)
+            # ====================================================================================
+            if pnl_bps <= -self.stop_loss_bps:
+                print(f"\n[STOP LOSS] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) <= -{self.stop_loss_bps} bps", flush=True)
+                print(f"[STOP LOSS] Exiting {position_type} as TAKER", flush=True)
+                await self.exit_position_fast(entry_side, entry_price, size)
+                self.active_orders.clear()
+                self.open_positions = 0
+                return
+
+            # ====================================================================================
+            # CONDITION 2: TAKE PROFIT
+            # ====================================================================================
+            if pnl_bps >= self.take_profit_bps:
+                print(f"\n[TAKE PROFIT] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) >= +{self.take_profit_bps} bps", flush=True)
+                print(f"[TAKE PROFIT] Exiting {position_type} as MAKER", flush=True)
+                await self.exit_position_maker(entry_side, entry_price, size, "TAKE_PROFIT")
+                self.active_orders.clear()
+                self.open_positions = 0
+                return
+
+            # ====================================================================================
+            # CONDITION 3: TREND REVERSAL (full reversal only, not FLAT)
+            # ====================================================================================
+            trend_reversed = (
+                (entry_trend == "UP" and current_trend == "DOWN") or
+                (entry_trend == "DOWN" and current_trend == "UP")
+            )
+            if trend_reversed:
+                print(f"\n[TREND REVERSAL] {entry_trend} → {current_trend}", flush=True)
+                print(f"[TREND REVERSAL] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f})", flush=True)
+                print(f"[TREND REVERSAL] Exiting {position_type} as MAKER", flush=True)
+                await self.exit_position_maker(entry_side, entry_price, size, "TREND_REVERSAL")
+                self.active_orders.clear()
+                self.open_positions = 0
+                return
+
+            # ====================================================================================
+            # CONDITION 4: MAX HOLD TIME
+            # ====================================================================================
+            if elapsed >= self.max_hold_time:
+                print(f"\n[MAX TIME] Held for {elapsed:.1f}s >= {self.max_hold_time}s", flush=True)
+                print(f"[MAX TIME] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f})", flush=True)
+                print(f"[MAX TIME] Exiting {position_type} as MAKER", flush=True)
+                await self.exit_position_maker(entry_side, entry_price, size, "MAX_TIME")
+                self.active_orders.clear()
+                self.open_positions = 0
+                return
+
+            # ====================================================================================
+            # Still holding - log periodic updates (every 10 seconds)
+            # ====================================================================================
+            elapsed_int = int(elapsed)
+            if not hasattr(self, '_last_hold_log') or self._last_hold_log != elapsed_int:
+                if elapsed_int > 0 and elapsed_int % 10 == 0:
+                    self._last_hold_log = elapsed_int
+                    print(f"[HOLDING] {position_type} | {elapsed:.0f}s | P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) | Trend: {current_trend}", flush=True)
+
+    async def exit_position_maker(self, entry_side: OrderSide, entry_price: float, size: float, reason: str):
+        """
+        Exit a position as a MAKER (post-only) with taker fallback.
+
+        Used for non-urgent exits: Take Profit, Trend Reversal, Max Time.
+        Places a maker order first, falls back to taker if not filled.
+
+        Args:
+            entry_side: The side we entered (BUY for long, SELL for short)
+            entry_price: The price we entered at
+            size: Position size
+            reason: Why we're exiting (for logging)
+        """
+        self.orphan_in_progress = True
+
+        try:
+            exit_side = OrderSide.SELL if entry_side == OrderSide.BUY else OrderSide.BUY
+            position_type = "LONG" if entry_side == OrderSide.BUY else "SHORT"
+
+            # Get current market
+            bid = self.current_bid
+            ask = self.current_ask
+
+            if not bid or not ask:
+                self.refresh_quotes()
+                bid = self.current_bid
+                ask = self.current_ask
+
+            if not bid or not ask:
+                print(f"[MAKER EXIT] No market data - falling back to taker", flush=True)
+                await self.exit_position_fast(entry_side, entry_price, size)
+                return
+
+            # Calculate maker exit price (inside spread for better fill)
+            spread = ask - bid
+            if exit_side == OrderSide.SELL:
+                # Selling: place between mid and ask (favorable for us)
+                exit_price = bid + (spread * 0.7)  # 70% into spread from bid
+            else:
+                # Buying: place between bid and mid (favorable for us)
+                exit_price = ask - (spread * 0.7)  # 70% into spread from ask
+
+            exit_price = self.client.format_price(self.coin, exit_price)
+
+            print(f"[MAKER EXIT] Placing {exit_side.value} @ ${exit_price:.2f} (post-only)", flush=True)
+
+            # Place maker exit order
+            try:
+                exit_order = self.client.place_limit_order(
+                    coin=self.coin,
+                    side=exit_side,
+                    price=exit_price,
+                    size=size,
+                    reduce_only=True,
+                    post_only=True,  # Maker only
+                    dry_run=self.dry_run
+                )
+            except Exception as e:
+                print(f"[MAKER EXIT] Order failed: {e} - falling back to taker", flush=True)
+                await self.exit_position_fast(entry_side, entry_price, size)
+                return
+
+            if not exit_order or not exit_order.order_id:
+                print(f"[MAKER EXIT] Order rejected - falling back to taker", flush=True)
+                await self.exit_position_fast(entry_side, entry_price, size)
+                return
+
+            # Wait for maker order to fill (up to 3 seconds)
+            MAKER_TIMEOUT = 3.0
+            start_time = time.time()
+
+            while time.time() - start_time < MAKER_TIMEOUT:
+                await asyncio.sleep(0.3)
+
+                try:
+                    open_orders = self.client.get_open_orders(self.coin)
+                    open_ids = {o.order_id for o in open_orders}
+
+                    if exit_order.order_id not in open_ids:
+                        # Filled!
+                        mid = self.current_mid or ((bid + ask) / 2)
+                        if entry_side == OrderSide.BUY:
+                            pnl = (exit_price - entry_price) * size
+                        else:
+                            pnl = (entry_price - exit_price) * size
+
+                        if pnl >= 0:
+                            self.total_profit += pnl
+                        else:
+                            self.total_loss += abs(pnl)
+
+                        print(f"\n{'*'*60}", flush=True)
+                        print(f"[MAKER EXIT SUCCESS] {reason}", flush=True)
+                        print(f"Entry: ${entry_price:.2f} | Exit: ${exit_price:.2f}", flush=True)
+                        print(f"P&L: ${pnl:.4f}", flush=True)
+                        print(f"{'*'*60}\n", flush=True)
+                        return
+
+                except Exception as e:
+                    print(f"[MAKER EXIT] Error checking fill: {e}", flush=True)
+
+            # Maker didn't fill - cancel and use taker
+            print(f"[MAKER EXIT] Timeout after {MAKER_TIMEOUT}s - falling back to taker", flush=True)
+            await self.verified_cancel(exit_order.order_id)
+            await self.exit_position_fast(entry_side, entry_price, size)
+
+        except Exception as e:
+            print(f"[MAKER EXIT] Error: {e}", flush=True)
+            # Last resort: taker exit
+            await self.exit_position_fast(entry_side, entry_price, size)
+        finally:
+            self.orphan_in_progress = False
 
     async def monitor_pair_fast(self, buy: TrackedOrder, sell: TrackedOrder):
         """
@@ -1378,10 +1618,15 @@ class MarketMaker:
         print(f"  Spread position:  {self.spread_position:.1%}")
         print(f"  Max positions:    {self.max_positions}")
         print(f"  Trade cooldown:   {self.min_trade_interval:.0f}s")
-        print(f"\nWMA Trend Detection (Phase 2: One-Sided Entries):")
+        print(f"\nWMA Trend Detection (Phase 3: Smart Exits):")
         print(f"  WMA Period:       {self.wma_period}")
         print(f"  Price Type:       {self.wma_price_type}")
         print(f"  Trend Threshold:  {self.wma_threshold:.2%}")
+        print(f"\nPosition Management:")
+        print(f"  Take Profit:      +{self.take_profit_bps:.0f} bps")
+        print(f"  Stop Loss:        -{self.stop_loss_bps:.0f} bps")
+        print(f"  Max Hold Time:    {self.max_hold_time:.0f}s")
+        print(f"  Exit on Reversal: UP↔DOWN only (hold through FLAT)")
         print(f"\nSafety Limits:")
         print(f"  Max trades:       {self.max_trades}")
         print(f"  Max loss:         ${self.max_loss:.2f}")
@@ -1614,7 +1859,7 @@ async def main():
             max_positions=1,                # One at a time
             max_trades=999999,              # No practical limit
             max_loss=5.0,                   # Stop if lose $5
-            min_trade_interval=1.0,         # 1 second cooldown (fast cycles)
+            min_trade_interval=5.0,         # 5 second cooldown between trades
             dry_run=False,                  # LIVE MODE
             max_quote_age_ms=1200.0,        # Speed-prioritized freshness gate
             ws_stale_timeout_s=15.0         # Reduce REST refresh frequency

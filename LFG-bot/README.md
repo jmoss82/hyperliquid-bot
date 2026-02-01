@@ -44,7 +44,7 @@ LFG-bot/
 
 ---
 
-## Strategy (WMA Trend-Based Cycle)
+## Strategy (WMA Trend-Based with Smart Exits)
 
 ```
 1. ENSURE FLAT
@@ -66,18 +66,26 @@ LFG-bot/
    ├── Trend UP → Place BUY (closer to ask)
    └── Trend DOWN → Place SELL (closer to bid)
 
-5. MONITOR (~1s)
-   ├── Order fills → Immediate fast exit (taker)
+5. MONITOR ENTRY (~1s)
+   ├── Order fills → Start position monitoring
    └── Timeout → Cancel order
 
-6. REPEAT
+6. MONITOR POSITION (Smart Exits)
+   ├── Stop Loss: P&L <= -10 bps → Taker exit (immediate)
+   ├── Take Profit: P&L >= +20 bps → Maker exit
+   ├── Trend Reversal: UP↔DOWN flip → Maker exit
+   └── Max Hold Time: > 120s → Maker exit
+
+7. REPEAT (5s cooldown)
 ```
 
 Key principles:
 - **WMA trend detection** (10-period on 5-second candles using weighted close)
 - **One-sided directional entries** (LONG on uptrend, SHORT on downtrend)
 - **Momentum positioning** (BUY near ask, SELL near bid)
-- **Immediate fast exits** (cross spread as taker after fill)
+- **Smart exits** with multiple conditions (SL/TP/Reversal/Timeout)
+- **Maker exits preferred** for non-urgent conditions (TP, reversal, timeout)
+- **Taker exits** for urgent conditions (stop loss) with 3s maker fallback
 - Verified cancels (poll until gone)
 - Quote freshness gate to prevent stale placements
 
@@ -97,7 +105,7 @@ mm = MarketMaker(
     max_positions=1,                # One at a time
     max_trades=999999,              # No practical limit
     max_loss=5.0,                   # Stop if lose $5
-    min_trade_interval=1.0,         # 1 second cooldown
+    min_trade_interval=5.0,         # 5 second cooldown between trades
     dry_run=False,                  # LIVE MODE
     max_quote_age_ms=1200.0,        # Speed-prioritized freshness gate
     ws_stale_timeout_s=15.0         # Reduce REST refresh frequency
@@ -118,6 +126,25 @@ mm = MarketMaker(
 - **DOWN:** Price < WMA - 0.05% threshold → Enter SHORT
 - **FLAT:** Price within ±0.05% of WMA → Skip (no clear trend)
 - **UNKNOWN:** Less than 10 candles → Skip (insufficient data)
+
+### Position Management (Smart Exits)
+
+| Parameter | Current Value | Description |
+|-----------|---------------|-------------|
+| `take_profit_bps` | 20 | Exit at +20 bps profit (maker exit) |
+| `stop_loss_bps` | 10 | Exit at -10 bps loss (taker exit) |
+| `max_hold_time` | 120s | Max seconds to hold position |
+| `position_check_interval` | 0.5s | How often to check exit conditions |
+
+**Exit Priority (checked in order):**
+1. **Stop Loss** (-10 bps) → Immediate taker exit
+2. **Take Profit** (+20 bps) → Maker exit (3s timeout, then taker fallback)
+3. **Trend Reversal** (UP↔DOWN) → Maker exit (hold through FLAT)
+4. **Max Hold Time** (120s) → Maker exit
+
+**Exit Methods:**
+- **Taker exit:** Cross spread immediately (used for stop loss)
+- **Maker exit:** Post-only limit order at 70% into spread, 3s timeout, falls back to taker if not filled
 
 ### Additional Controls
 
