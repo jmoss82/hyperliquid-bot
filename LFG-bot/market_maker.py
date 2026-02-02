@@ -170,7 +170,7 @@ class MarketMaker:
         self.take_profit_bps = 20.0      # Exit at +20 bps profit
         self.stop_loss_bps = 7.0         # Exit at -7 bps loss
         self.max_hold_time = 120.0       # Max seconds to hold position
-        self.position_check_interval = 0.5  # Check every 0.5 seconds
+        self.position_check_interval = 0.1  # Check every 0.1 seconds
 
     def _normalize_status(self, status: Optional[XYZOrderStatus]) -> str:
         """Normalize order status to internal uppercase strings."""
@@ -1036,10 +1036,10 @@ class MarketMaker:
             # Place aggressive taker order (cross the spread)
             if exit_side == OrderSide.SELL:
                 # Selling: place below bid to guarantee fill
-                exit_price = bid * 0.998  # 0.2% below bid
+                exit_price = bid * 0.9995  # 0.05% below bid
             else:
                 # Buying: place above ask to guarantee fill
-                exit_price = ask * 1.002  # 0.2% above ask
+                exit_price = ask * 1.0005  # 0.05% above ask
             
             exit_price = self.client.format_price(self.coin, exit_price)
             
