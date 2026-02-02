@@ -1,18 +1,17 @@
 """
 Automated Market Making Bot for HIP-3 Pairs
 
-Strategy (Phase 3: WMA Trend-Based with Smart Exits):
+Strategy (Phase 3: WMA Trend-Based with Fast Exits):
 1. Build 5-second candles from streaming bid/ask data
 2. Calculate 10-period WMA using weighted close (H+L+C+C)/4
 3. Detect trend: UP (price > WMA) or DOWN (price < WMA)
-4. Place ONE-SIDED order based on trend direction:
-   - Uptrend → BUY order (closer to ask)
-   - Downtrend → SELL order (closer to bid)
-5. Monitor position for exit conditions:
-   - Stop Loss: Exit as taker if P&L <= -10 bps
-   - Take Profit: Exit as maker if P&L >= +20 bps
-   - Trend Reversal: Exit as maker if trend flips (UP↔DOWN)
-   - Max Hold Time: Exit as maker if held > 120s
+4. Place ONE-SIDED MAKER order based on trend direction:
+   - Uptrend → BUY order (closer to ask, post-only)
+   - Downtrend → SELL order (closer to bid, post-only)
+5. Monitor position for exit conditions (ALL TAKER EXITS):
+   - Stop Loss: Exit as taker if P&L <= -7 bps
+   - Take Profit: Exit as taker if P&L >= +20 bps
+   - Max Hold Time: Exit as taker if held > 120s
 6. Repeat continuously
 
 Key parameters:
@@ -21,7 +20,7 @@ Key parameters:
 - spread_position: Where to place orders (0=edge, 0.5=mid, default: 0.2)
 - min_trade_interval: Cooldown between trades (default: 5s)
 - take_profit_bps: Take profit threshold (default: +20 bps)
-- stop_loss_bps: Stop loss threshold (default: -10 bps)
+- stop_loss_bps: Stop loss threshold (default: -7 bps)
 - max_hold_time: Maximum position hold time (default: 120s)
 """
 import asyncio
@@ -169,7 +168,7 @@ class MarketMaker:
 
         # Position management parameters (Phase 3: Smart exits)
         self.take_profit_bps = 20.0      # Exit at +20 bps profit
-        self.stop_loss_bps = 10.0        # Exit at -10 bps loss
+        self.stop_loss_bps = 7.0         # Exit at -7 bps loss
         self.max_hold_time = 120.0       # Max seconds to hold position
         self.position_check_interval = 0.5  # Check every 0.5 seconds
 
@@ -686,12 +685,11 @@ class MarketMaker:
         """
         Monitor an open position for exit conditions.
 
-        PHASE 3: Smart exit logic with multiple conditions.
+        PHASE 3: Fast exit logic - ALL TAKER EXITS.
         Priority order:
-        1. Stop Loss (-10 bps) → Taker exit immediately
-        2. Take Profit (+20 bps) → Maker exit
-        3. Trend Reversal (UP↔DOWN) → Maker exit
-        4. Max Hold Time (120s) → Maker exit
+        1. Stop Loss (-7 bps) → Taker exit immediately
+        2. Take Profit (+20 bps) → Taker exit immediately
+        3. Max Hold Time (120s) → Taker exit immediately
 
         Args:
             entry_side: The side we entered (BUY for long, SELL for short)
@@ -749,36 +747,20 @@ class MarketMaker:
             # ====================================================================================
             if pnl_bps >= self.take_profit_bps:
                 print(f"\n[TAKE PROFIT] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) >= +{self.take_profit_bps} bps", flush=True)
-                print(f"[TAKE PROFIT] Exiting {position_type} as MAKER", flush=True)
-                await self.exit_position_maker(entry_side, entry_price, size, "TAKE_PROFIT")
+                print(f"[TAKE PROFIT] Exiting {position_type} as TAKER", flush=True)
+                await self.exit_position_fast(entry_side, entry_price, size)
                 self.active_orders.clear()
                 self.open_positions = 0
                 return
 
             # ====================================================================================
-            # CONDITION 3: TREND REVERSAL (full reversal only, not FLAT)
-            # ====================================================================================
-            trend_reversed = (
-                (entry_trend == "UP" and current_trend == "DOWN") or
-                (entry_trend == "DOWN" and current_trend == "UP")
-            )
-            if trend_reversed:
-                print(f"\n[TREND REVERSAL] {entry_trend} → {current_trend}", flush=True)
-                print(f"[TREND REVERSAL] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f})", flush=True)
-                print(f"[TREND REVERSAL] Exiting {position_type} as MAKER", flush=True)
-                await self.exit_position_maker(entry_side, entry_price, size, "TREND_REVERSAL")
-                self.active_orders.clear()
-                self.open_positions = 0
-                return
-
-            # ====================================================================================
-            # CONDITION 4: MAX HOLD TIME
+            # CONDITION 3: MAX HOLD TIME
             # ====================================================================================
             if elapsed >= self.max_hold_time:
                 print(f"\n[MAX TIME] Held for {elapsed:.1f}s >= {self.max_hold_time}s", flush=True)
                 print(f"[MAX TIME] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f})", flush=True)
-                print(f"[MAX TIME] Exiting {position_type} as MAKER", flush=True)
-                await self.exit_position_maker(entry_side, entry_price, size, "MAX_TIME")
+                print(f"[MAX TIME] Exiting {position_type} as TAKER", flush=True)
+                await self.exit_position_fast(entry_side, entry_price, size)
                 self.active_orders.clear()
                 self.open_positions = 0
                 return
@@ -1626,7 +1608,6 @@ class MarketMaker:
         print(f"  Take Profit:      +{self.take_profit_bps:.0f} bps")
         print(f"  Stop Loss:        -{self.stop_loss_bps:.0f} bps")
         print(f"  Max Hold Time:    {self.max_hold_time:.0f}s")
-        print(f"  Exit on Reversal: UP↔DOWN only (hold through FLAT)")
         print(f"\nSafety Limits:")
         print(f"  Max trades:       {self.max_trades}")
         print(f"  Max loss:         ${self.max_loss:.2f}")
