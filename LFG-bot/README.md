@@ -71,9 +71,10 @@ LFG-bot/
    └── Timeout → Cancel order
 
 6. MONITOR POSITION (Fast Exits - ALL TAKER)
-   ├── Stop Loss: P&L <= -7 bps → Taker exit (immediate)
-   ├── Take Profit: P&L >= +20 bps → Taker exit (immediate)
-   └── Max Hold Time: > 120s → Taker exit (immediate)
+   ├── [0-10s] Only TP and Max Hold active (SL gated - filters noise)
+   ├── [10s+]  Stop Loss: P&L <= -7 bps → Taker exit (immediate)
+   ├──         Take Profit: P&L >= +20 bps → Taker exit (immediate)
+   └──         Max Hold Time: > 120s → Taker exit (immediate)
 
 7. REPEAT (5s cooldown)
 ```
@@ -130,17 +131,18 @@ mm = MarketMaker(
 | Parameter | Current Value | Description |
 |-----------|---------------|-------------|
 | `take_profit_bps` | 20 | Exit at +20 bps profit (taker exit) |
-| `stop_loss_bps` | 7 | Exit at -7 bps loss (taker exit) |
+| `stop_loss_bps` | 7 | Exit at -7 bps loss (taker exit, active after 10s) |
+| `min_hold_time` | 10s | SL inactive for first 10s to filter short-term noise |
 | `max_hold_time` | 120s | Max seconds to hold position |
-| `position_check_interval` | 0.5s | How often to check exit conditions |
+| `position_check_interval` | 0.1s | How often to check exit conditions |
 
 **Exit Priority (checked in order):**
-1. **Stop Loss** (-7 bps) → Immediate taker exit
-2. **Take Profit** (+20 bps) → Immediate taker exit
+1. **Stop Loss** (-7 bps) → Immediate taker exit — **gated: only active after 10s hold**
+2. **Take Profit** (+20 bps) → Immediate taker exit (ungated, fires anytime)
 3. **Max Hold Time** (120s) → Immediate taker exit
 
 **Exit Method:**
-- **All exits are taker:** Cross spread immediately for fast execution (0.2% beyond bid/ask to guarantee fill)
+- **All exits are taker:** Cross spread immediately for fast execution (0.05% beyond bid/ask to guarantee fill)
 
 ### Additional Controls
 
