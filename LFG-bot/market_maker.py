@@ -169,6 +169,7 @@ class MarketMaker:
         # Position management parameters (Phase 3: Smart exits)
         self.take_profit_bps = 20.0      # Exit at +20 bps profit
         self.stop_loss_bps = 7.0         # Exit at -7 bps loss
+        self.min_hold_time = 10.0        # SL inactive for first 10s (filter noise)
         self.max_hold_time = 120.0       # Max seconds to hold position
         self.position_check_interval = 0.1  # Check every 0.1 seconds
 
@@ -687,7 +688,7 @@ class MarketMaker:
 
         PHASE 3: Fast exit logic - ALL TAKER EXITS.
         Priority order:
-        1. Stop Loss (-7 bps) → Taker exit immediately
+        1. Stop Loss (-7 bps) → Taker exit (active after min_hold_time only)
         2. Take Profit (+20 bps) → Taker exit immediately
         3. Max Hold Time (120s) → Taker exit immediately
 
@@ -732,10 +733,10 @@ class MarketMaker:
             elapsed = time.time() - entry_time
 
             # ====================================================================================
-            # CONDITION 1: STOP LOSS (highest priority)
+            # CONDITION 1: STOP LOSS (active only after min_hold_time)
             # ====================================================================================
-            if pnl_bps <= -self.stop_loss_bps:
-                print(f"\n[STOP LOSS] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) <= -{self.stop_loss_bps} bps", flush=True)
+            if elapsed >= self.min_hold_time and pnl_bps <= -self.stop_loss_bps:
+                print(f"\n[STOP LOSS] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) <= -{self.stop_loss_bps} bps | held {elapsed:.1f}s", flush=True)
                 print(f"[STOP LOSS] Exiting {position_type} as TAKER", flush=True)
                 await self.exit_position_fast(entry_side, entry_price, size)
                 self.active_orders.clear()
@@ -1606,7 +1607,7 @@ class MarketMaker:
         print(f"  Trend Threshold:  {self.wma_threshold:.2%}")
         print(f"\nPosition Management:")
         print(f"  Take Profit:      +{self.take_profit_bps:.0f} bps")
-        print(f"  Stop Loss:        -{self.stop_loss_bps:.0f} bps")
+        print(f"  Stop Loss:        -{self.stop_loss_bps:.0f} bps (active after {self.min_hold_time:.0f}s)")
         print(f"  Max Hold Time:    {self.max_hold_time:.0f}s")
         print(f"\nSafety Limits:")
         print(f"  Max trades:       {self.max_trades}")
