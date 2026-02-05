@@ -85,7 +85,20 @@ class MarketMaker:
         dry_run: bool = True,
         max_quote_age_ms: float = 500.0,
         ws_stale_timeout_s: float = 5.0,
-        opportunity_queue_size: int = 1
+        opportunity_queue_size: int = 1,
+        wma_period: int = 60,
+        wma_price_type: str = "weighted_close",
+        wma_threshold: float = 0.0005,
+        candle_interval_seconds: int = 5,
+        max_candles: int = 400,
+        min_trend_streak: int = 2,
+        min_wma_distance_bps: float = 3.0,
+        min_wma_slope_bps: float = 0.8,
+        trend_enter_bps: float = 4.0,
+        trend_exit_bps: float = 8.0,
+        wma_slope_shift_candles: int = 3,
+        structure_break_buffer_bps: float = 3.0,
+        signal_ttl_s: float = 6.0,
     ):
         self.client = client
         self.coin = coin
@@ -101,6 +114,7 @@ class MarketMaker:
         self.max_quote_age_ms = max_quote_age_ms
         self.ws_stale_timeout_s = ws_stale_timeout_s
         self.opportunity_queue_size = opportunity_queue_size
+        self.signal_ttl_s = signal_ttl_s
 
         # State
         self.ws_url = "wss://api.hyperliquid.xyz/ws"
@@ -159,12 +173,29 @@ class MarketMaker:
         self._fills_task = None
         self._watchdog_task = None
 
-        # WMA trend detection (Phase 2: One-sided entries)
-        self.candle_builder = CandleBuilder(candle_interval_seconds=5, max_candles=100)
-        self.wma_period = 10
-        self.wma_price_type = 'weighted_close'  # (H+L+C+C)/4
-        self.wma_threshold = 0.0005  # 0.05% buffer for FLAT detection
+        # WMA trend detection (Unified signal)
+        self.candle_builder = CandleBuilder(
+            candle_interval_seconds=candle_interval_seconds,
+            max_candles=max_candles
+        )
+        self.wma_period = wma_period
+        self.wma_price_type = wma_price_type  # (H+L+C+C)/4
+        self.wma_threshold = wma_threshold
         self.last_trend = "UNKNOWN"
+        self.trend_state = "UNKNOWN"
+        self._trend_streak = 0
+        self.min_trend_streak = min_trend_streak
+        self.min_wma_distance_bps = min_wma_distance_bps
+        self.min_wma_slope_bps = min_wma_slope_bps
+        self.trend_enter_bps = trend_enter_bps
+        self.trend_exit_bps = trend_exit_bps
+        self.wma_slope_shift_candles = wma_slope_shift_candles
+        self.structure_break_buffer_bps = structure_break_buffer_bps
+        self.last_eval_price: Optional[float] = None
+        self.last_wma: Optional[float] = None
+        self.last_raw_trend: str = "UNKNOWN"
+        self.latest_signal: Optional[Dict] = None
+        self.latest_signal_ts: Optional[float] = None
 
         # Position management parameters (Phase 3: Smart exits)
         self.take_profit_bps = 20.0      # Exit at +20 bps profit
@@ -440,9 +471,7 @@ class MarketMaker:
 
     def should_enter(self, bid: float, ask: float) -> Optional[Opportunity]:
         """
-        Check if we should enter a position based on trend and spread.
-
-        PHASE 2: Now includes WMA trend check - only enter on UP or DOWN trends.
+        Check if we should enter based on unified signal gating.
 
         Returns:
             Opportunity if criteria met, None otherwise
@@ -470,27 +499,32 @@ class MarketMaker:
         if self.orphan_in_progress:
             return None
 
-        # Calculate spread
+        # Ensure we have a recent signal (from a completed candle)
+        if not self.latest_signal or not self.latest_signal_ts:
+            return None
+
+        age = time.monotonic() - self.latest_signal_ts
+        if age > self.signal_ttl_s:
+            return None
+
+        # Recheck spread on current quotes
         mid = (bid + ask) / 2
         spread = ask - bid
         spread_bps = (spread / mid) * 10000
-
-        # Check threshold
         if spread_bps < self.spread_threshold_bps:
             return None
 
-        # PHASE 2: Check trend - only enter on clear UP or DOWN
-        trend = self.get_trend()
-        if trend not in ['UP', 'DOWN']:
-            # Skip FLAT (price on WMA line) and UNKNOWN (insufficient data)
+        signal = self.latest_signal.get("signal")
+        if signal not in ("LONG", "SHORT"):
             return None
 
+        trend = "UP" if signal == "LONG" else "DOWN"
         return Opportunity(
             bid=bid,
             ask=ask,
             spread_bps=spread_bps,
             timestamp=datetime.now(timezone.utc).timestamp(),
-            trend=trend  # PHASE 2: Include trend in opportunity
+            trend=trend
         )
 
     async def place_order(self, opportunity: Opportunity):
@@ -718,19 +752,39 @@ class MarketMaker:
             if not all([bid, ask, mid]):
                 continue
 
-            # Calculate current P&L in bps
+            # Calculate current P&L in bps using ACTUAL exit prices (not mid)
+            # This prevents SL bleed by accounting for spread cost at exit
             if entry_side == OrderSide.BUY:
-                # Long: profit when price goes up
-                pnl_dollars = (mid - entry_price) * size
-                pnl_bps = ((mid - entry_price) / entry_price) * 10000
+                # Long: exit by selling at BID
+                exit_price = bid * 0.9995  # Actual exit price (bid minus buffer)
+                pnl_dollars = (exit_price - entry_price) * size
+                pnl_bps = ((exit_price - entry_price) / entry_price) * 10000
             else:
-                # Short: profit when price goes down
-                pnl_dollars = (entry_price - mid) * size
-                pnl_bps = ((entry_price - mid) / entry_price) * 10000
+                # Short: exit by buying at ASK
+                exit_price = ask * 1.0005  # Actual exit price (ask plus buffer)
+                pnl_dollars = (entry_price - exit_price) * size
+                pnl_bps = ((entry_price - exit_price) / entry_price) * 10000
 
-            # Get current trend
-            current_trend = self.get_trend()
+            # Get current trend (sticky state from completed candles)
+            current_trend = self.trend_state
             elapsed = time.time() - entry_time
+
+            # ====================================================================================
+            # CONDITION 0: TREND FLIP EXIT
+            # ====================================================================================
+            if entry_side == OrderSide.BUY and current_trend == "DOWN":
+                print(f"\n[TREND FLIP] Trend turned DOWN - exiting LONG", flush=True)
+                await self.exit_position_fast(entry_side, entry_price, size)
+                self.active_orders.clear()
+                self.open_positions = 0
+                return
+
+            if entry_side == OrderSide.SELL and current_trend == "UP":
+                print(f"\n[TREND FLIP] Trend turned UP - exiting SHORT", flush=True)
+                await self.exit_position_fast(entry_side, entry_price, size)
+                self.active_orders.clear()
+                self.open_positions = 0
+                return
 
             # ====================================================================================
             # CONDITION 1: STOP LOSS (active only after min_hold_time)
@@ -1178,6 +1232,204 @@ class MarketMaker:
             threshold=self.wma_threshold
         )
 
+    def candle_price(self, candle: "Candle") -> float:
+        """Price representation for a completed candle based on configured mode."""
+        if self.wma_price_type == "weighted_close":
+            return candle.weighted_close()
+        if self.wma_price_type == "mid_price":
+            return candle.mid_price()
+        return candle.close
+
+    def trend_from_price(self, wma: Optional[float], price: Optional[float]) -> str:
+        """Classify trend from a given price vs WMA."""
+        if wma is None or price is None:
+            return "UNKNOWN"
+        upper = wma * (1 + self.wma_threshold)
+        lower = wma * (1 - self.wma_threshold)
+        if price > upper:
+            return "UP"
+        if price < lower:
+            return "DOWN"
+        return "FLAT"
+
+    def update_trend_streak(self, trend: str) -> int:
+        """Track consecutive completed candles with same trend state."""
+        if trend in ("UP", "DOWN"):
+            if trend == self.trend_state:
+                self._trend_streak += 1
+            else:
+                self._trend_streak = 1
+        else:
+            self._trend_streak = 0
+        return self._trend_streak
+
+    def update_trend_state(self, wma: Optional[float], price: Optional[float]) -> str:
+        """
+        Hysteresis trend state machine based on bps distance to WMA.
+        """
+        if wma is None or price is None or wma == 0:
+            self.trend_state = "UNKNOWN"
+            return self.trend_state
+
+        delta_bps = ((price - wma) / wma) * 10000
+
+        if self.trend_state == "UP":
+            if delta_bps <= -self.trend_exit_bps:
+                self.trend_state = "DOWN"
+            else:
+                self.trend_state = "UP"
+            return self.trend_state
+
+        if self.trend_state == "DOWN":
+            if delta_bps >= self.trend_exit_bps:
+                self.trend_state = "UP"
+            else:
+                self.trend_state = "DOWN"
+            return self.trend_state
+
+        if delta_bps >= self.trend_enter_bps:
+            self.trend_state = "UP"
+        elif delta_bps <= -self.trend_enter_bps:
+            self.trend_state = "DOWN"
+        else:
+            self.trend_state = "FLAT"
+
+        return self.trend_state
+
+    def _calculate_wma_from_values(self, values: List[float]) -> Optional[float]:
+        """Simple WMA helper for slope calculation."""
+        if not values:
+            return None
+        weights = range(1, len(values) + 1)
+        weighted_sum = sum(v * w for v, w in zip(values, weights))
+        return weighted_sum / sum(weights)
+
+    def get_wma_slope_bps(self) -> float:
+        """
+        WMA slope in bps between latest and prior complete-candle windows.
+        Positive = rising WMA, negative = falling WMA.
+        """
+        candles = list(self.candle_builder.candles)
+        shift = max(1, self.wma_slope_shift_candles)
+        if len(candles) < self.wma_period + shift:
+            return 0.0
+
+        latest_window = candles[-self.wma_period :]
+        prior_window = candles[-(self.wma_period + shift) : -shift]
+        latest_vals = [self.candle_price(c) for c in latest_window]
+        prior_vals = [self.candle_price(c) for c in prior_window]
+
+        wma_now = self._calculate_wma_from_values(latest_vals)
+        wma_prev = self._calculate_wma_from_values(prior_vals)
+        if not wma_now or not wma_prev or wma_prev == 0:
+            return 0.0
+        return ((wma_now - wma_prev) / wma_prev) * 10000
+
+    def get_true_structure_levels(self) -> tuple[Optional[float], Optional[float]]:
+        """Return (support, resistance) using CandleBuilder output."""
+        structure = self.candle_builder.get_structure_stats()
+        support = structure.get("last_support")
+        resistance = structure.get("last_resistance")
+        return support, resistance
+
+    def unified_signal(
+        self,
+        bid: float,
+        ask: float,
+        eval_price: Optional[float],
+        wma: Optional[float],
+        trend: str,
+    ) -> Dict:
+        """Return one unified signal decision for this candle."""
+        mid = (bid + ask) / 2
+        spread = ask - bid
+        spread_bps = (spread / mid) * 10000
+
+        streak = self.update_trend_streak(trend)
+        support, resistance = self.get_true_structure_levels()
+        wma_slope_bps = self.get_wma_slope_bps()
+
+        if wma is None or eval_price is None:
+            return {
+                "signal": "NO_TRADE",
+                "reason": "No WMA/current price yet",
+                "spread_bps": spread_bps,
+                "trend_streak": streak,
+                "wma_distance_bps": 0.0,
+                "wma_slope_bps": wma_slope_bps,
+                "support": support,
+                "resistance": resistance,
+            }
+
+        wma_distance_bps = abs((eval_price - wma) / wma) * 10000
+
+        structure_block_long = False
+        structure_block_short = False
+        if support:
+            support_break = support * (1 - self.structure_break_buffer_bps / 10000)
+            structure_block_long = eval_price < support_break
+        if resistance:
+            resistance_break = resistance * (1 + self.structure_break_buffer_bps / 10000)
+            structure_block_short = eval_price > resistance_break
+
+        can_trade = spread_bps >= self.spread_threshold_bps
+        has_persistence = streak >= self.min_trend_streak
+        far_enough_from_wma = wma_distance_bps >= self.min_wma_distance_bps
+        slope_long_ok = wma_slope_bps >= self.min_wma_slope_bps
+        slope_short_ok = wma_slope_bps <= -self.min_wma_slope_bps
+
+        long_ok = (
+            trend == "UP"
+            and can_trade
+            and has_persistence
+            and far_enough_from_wma
+            and slope_long_ok
+            and not structure_block_long
+        )
+        short_ok = (
+            trend == "DOWN"
+            and can_trade
+            and has_persistence
+            and far_enough_from_wma
+            and slope_short_ok
+            and not structure_block_short
+        )
+
+        if long_ok:
+            return {
+                "signal": "LONG",
+                "reason": "UP trend + persistence + WMA distance + spread",
+                "spread_bps": spread_bps,
+                "trend_streak": streak,
+                "wma_distance_bps": wma_distance_bps,
+                "wma_slope_bps": wma_slope_bps,
+                "support": support,
+                "resistance": resistance,
+            }
+
+        if short_ok:
+            return {
+                "signal": "SHORT",
+                "reason": "DOWN trend + persistence + WMA distance + spread",
+                "spread_bps": spread_bps,
+                "trend_streak": streak,
+                "wma_distance_bps": wma_distance_bps,
+                "wma_slope_bps": wma_slope_bps,
+                "support": support,
+                "resistance": resistance,
+            }
+
+        return {
+            "signal": "NO_TRADE",
+            "reason": "Filter blocked (spread/trend/persistence/distance/structure)",
+            "spread_bps": spread_bps,
+            "trend_streak": streak,
+            "wma_distance_bps": wma_distance_bps,
+            "wma_slope_bps": wma_slope_bps,
+            "support": support,
+            "resistance": resistance,
+        }
+
     def get_wma_stats(self) -> dict:
         """Get current WMA statistics for logging/debugging."""
         wma = self.candle_builder.calculate_wma(self.wma_period, self.wma_price_type)
@@ -1605,6 +1857,12 @@ class MarketMaker:
         print(f"  WMA Period:       {self.wma_period}")
         print(f"  Price Type:       {self.wma_price_type}")
         print(f"  Trend Threshold:  {self.wma_threshold:.2%}")
+        print(f"  Trend Enter/Exit: {self.trend_enter_bps:.1f}/{self.trend_exit_bps:.1f} bps")
+        print(f"  Min Streak:       {self.min_trend_streak} candles")
+        print(f"  Min WMA Dist:     {self.min_wma_distance_bps:.1f} bps")
+        print(f"  Min WMA Slope:    {self.min_wma_slope_bps:.1f} bps/candle")
+        print(f"  WMA Slope Shift:  {self.wma_slope_shift_candles} candles")
+        print(f"  Structure Buffer: {self.structure_break_buffer_bps:.1f} bps")
         print(f"\nPosition Management:")
         print(f"  Take Profit:      +{self.take_profit_bps:.0f} bps")
         print(f"  Stop Loss:        -{self.stop_loss_bps:.0f} bps (active after {self.min_hold_time:.0f}s)")
@@ -1655,25 +1913,39 @@ class MarketMaker:
                                 self.last_book_update_ts = time.monotonic()
 
                                 # ========================================
-                                # PHASE 1: WMA Trend Monitoring
+                                # UNIFIED SIGNAL: Use completed candles only
                                 # ========================================
-                                # Update candle builder with new tick data
                                 completed_candle = self.candle_builder.update(bid, ask)
 
-                                # When a candle completes (every 5s), check for trend changes
                                 if completed_candle:
-                                    current_trend = self.get_trend()
-                                    wma_stats = self.get_wma_stats()
+                                    eval_price = self.candle_price(completed_candle)
+                                    wma = self.candle_builder.calculate_wma(self.wma_period, self.wma_price_type)
+                                    raw_trend = self.trend_from_price(wma, eval_price)
+                                    trend = self.update_trend_state(wma, eval_price)
+
+                                    self.last_eval_price = eval_price
+                                    self.last_wma = wma
+                                    self.last_raw_trend = raw_trend
+
+                                    signal = self.unified_signal(
+                                        bid=bid,
+                                        ask=ask,
+                                        eval_price=eval_price,
+                                        wma=wma,
+                                        trend=trend,
+                                    )
+                                    self.latest_signal = signal
+                                    self.latest_signal_ts = time.monotonic()
 
                                     # Log trend changes
-                                    if current_trend != self.last_trend:
+                                    if trend != self.last_trend:
                                         print(f"\n{'='*60}", flush=True)
-                                        print(f"[WMA TREND CHANGE] {self.last_trend} → {current_trend}", flush=True)
-                                        if wma_stats['wma'] and wma_stats['current_price']:
-                                            print(f"Price: ${wma_stats['current_price']:.3f} | WMA: ${wma_stats['wma']:.3f}", flush=True)
-                                        print(f"Candles: {wma_stats['total_candles']}", flush=True)
+                                        print(f"[WMA TREND CHANGE] {self.last_trend} → {trend} (raw {raw_trend})", flush=True)
+                                        if wma and eval_price:
+                                            print(f"Price: ${eval_price:.3f} | WMA: ${wma:.3f}", flush=True)
+                                        print(f"Candles: {len(self.candle_builder.candles)}", flush=True)
                                         print(f"{'='*60}\n", flush=True)
-                                        self.last_trend = current_trend
+                                        self.last_trend = trend
 
                                 # Calculate spread for logging
                                 spread_abs = ask - bid
@@ -1685,20 +1957,21 @@ class MarketMaker:
                                 self._update_count += 1
 
                                 if self._update_count % 100 == 0:
-                                    # Enhanced logging with WMA info
-                                    wma_stats = self.get_wma_stats()
-                                    wma_str = f"WMA: ${wma_stats['wma']:.3f}" if wma_stats['wma'] else "WMA: Building..."
-                                    trend_str = wma_stats['trend']
+                                    wma_str = f"WMA: ${self.last_wma:.3f}" if self.last_wma else "WMA: Building..."
+                                    trend_str = self.last_trend
+                                    cp_str = f"${self.last_eval_price:.3f}" if self.last_eval_price else "n/a"
 
                                     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] "
                                           f"Bid: ${bid:.2f} | Ask: ${ask:.2f} | "
                                           f"Spread: ${spread_abs:.2f} ({spread_bps:.2f} bps) | "
-                                          f"{wma_str} | Trend: {trend_str}", flush=True)
+                                          f"Price: {cp_str} | {wma_str} | Trend: {trend_str}", flush=True)
 
-                                # Check for opportunity
-                                opportunity = self.should_enter(bid, ask)
-                                if opportunity:
-                                    self.enqueue_opportunity(opportunity)
+                                # Check for opportunity only on completed candle signal
+                                if completed_candle and self.latest_signal:
+                                    if self.latest_signal.get("signal") in ("LONG", "SHORT"):
+                                        opportunity = self.should_enter(bid, ask)
+                                        if opportunity:
+                                            self.enqueue_opportunity(opportunity)
 
                     except Exception as e:
                         print(f"[ERROR] {e}")
@@ -1844,7 +2117,20 @@ async def main():
             min_trade_interval=5.0,         # 5 second cooldown between trades
             dry_run=False,                  # LIVE MODE
             max_quote_age_ms=1200.0,        # Speed-prioritized freshness gate
-            ws_stale_timeout_s=15.0         # Reduce REST refresh frequency
+            ws_stale_timeout_s=15.0,        # Reduce REST refresh frequency
+            wma_period=60,                  # 60-period WMA (5 minutes)
+            wma_price_type="weighted_close",
+            wma_threshold=0.0005,           # 0.05% buffer
+            candle_interval_seconds=5,
+            max_candles=400,                # Enough for swing detection window
+            min_trend_streak=2,
+            min_wma_distance_bps=3.0,
+            min_wma_slope_bps=0.8,
+            trend_enter_bps=4.0,
+            trend_exit_bps=8.0,
+            wma_slope_shift_candles=3,
+            structure_break_buffer_bps=3.0,
+            signal_ttl_s=6.0
         )
 
         print("Starting market maker...", flush=True)

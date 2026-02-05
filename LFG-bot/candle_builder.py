@@ -27,21 +27,45 @@ class Candle:
         return (self.high + self.low) / 2
 
 
+@dataclass
+class SwingPoint:
+    """Market structure swing point (support/resistance)"""
+    timestamp: float
+    price: float
+    swing_type: str  # "high" for resistance, "low" for support
+    index: int  # Position in candle history when detected
+
+
 class CandleBuilder:
     """Builds 5-second candles from streaming tick data"""
 
-    def __init__(self, candle_interval_seconds: int = 5, max_candles: int = 100):
+    def __init__(self, candle_interval_seconds: int = 5, max_candles: int = 400,
+                 swing_lookback_left: int = 180, swing_lookback_right: int = 12,
+                 swing_dedup_candles: int = 36, swing_dedup_bps: float = 15.0):
         """
         Initialize candle builder.
 
         Args:
             candle_interval_seconds: How often to close a candle (default: 5s)
-            max_candles: Maximum number of candles to store (default: 100)
+            max_candles: Maximum number of candles to store (default: 400)
+            swing_lookback_left: Candles before pivot to confirm high/low (default: 180 = 15 minutes)
+            swing_lookback_right: Candles after pivot to confirm reversal (default: 12 = 1 minute)
+            swing_dedup_candles: Don't report swings within this many candles of last (default: 36 = 3 min)
+            swing_dedup_bps: Don't report swings within this many bps of last (default: 15 bps)
         """
         self.candle_interval = candle_interval_seconds
         self.candles: deque[Candle] = deque(maxlen=max_candles)
         self.current_candle: Optional[Candle] = None
         self.candle_start_time: float = 0
+
+        # Swing point tracking (asymmetric for faster detection)
+        self.swing_lookback_left = swing_lookback_left
+        self.swing_lookback_right = swing_lookback_right
+        self.swing_dedup_candles = swing_dedup_candles
+        self.swing_dedup_bps = swing_dedup_bps
+        self.swing_points: List[SwingPoint] = []  # All detected swing points
+        self.last_swing_high: Optional[SwingPoint] = None
+        self.last_swing_low: Optional[SwingPoint] = None
 
     def update(self, bid: float, ask: float, timestamp: Optional[float] = None) -> Optional[Candle]:
         """
@@ -68,6 +92,9 @@ class CandleBuilder:
                 self.candles.append(self.current_candle)
                 completed_candle = self.current_candle
 
+                # Check for swing points after adding completed candle
+                self._check_swing()
+
             # Start new candle
             self.current_candle = Candle(
                 timestamp=timestamp,
@@ -84,6 +111,81 @@ class CandleBuilder:
             self.current_candle.close = mid
 
         return completed_candle
+
+    def _check_swing(self) -> None:
+        """
+        Check if the last completed candle forms a swing point.
+
+        Uses asymmetric lookback for faster detection:
+        - Left (history): 180 candles (15 min) - confirms it's a real pivot
+        - Right (confirmation): 12 candles (1 min) - confirms reversal quickly
+
+        Example with 180/12: pivot at index -13 needs:
+        - 180 candles before it (index -193 to -13)
+        - 12 candles after it (index -12 to -1)
+        """
+        required_candles = self.swing_lookback_left + self.swing_lookback_right + 1
+        if len(self.candles) < required_candles:
+            return  # Not enough data yet
+
+        # Check the candle at position -(right_lookback + 1)
+        # This ensures we have right_lookback candles after it for confirmation
+        check_idx = -(self.swing_lookback_right + 1)
+        pivot_candle = list(self.candles)[check_idx]
+
+        # Get surrounding candles (asymmetric)
+        left_candles = list(self.candles)[check_idx - self.swing_lookback_left:check_idx]
+        right_candles = list(self.candles)[check_idx + 1:check_idx + 1 + self.swing_lookback_right]
+
+        # Check for swing high (resistance)
+        is_swing_high = all(pivot_candle.high > c.high for c in left_candles + right_candles)
+        if is_swing_high:
+            self._add_swing(pivot_candle.timestamp, pivot_candle.high, "high", len(self.candles) + check_idx)
+
+        # Check for swing low (support)
+        is_swing_low = all(pivot_candle.low < c.low for c in left_candles + right_candles)
+        if is_swing_low:
+            self._add_swing(pivot_candle.timestamp, pivot_candle.low, "low", len(self.candles) + check_idx)
+
+    def _add_swing(self, timestamp: float, price: float, swing_type: str, index: int) -> None:
+        """
+        Record a new swing point with deduplication.
+
+        Args:
+            timestamp: When the swing occurred
+            price: Price level of the swing
+            swing_type: "high" or "low"
+            index: Position in candle history
+        """
+        # Deduplication: Skip if too close to last swing of same type
+        last_swing = self.last_swing_high if swing_type == "high" else self.last_swing_low
+
+        if last_swing is not None:
+            # Calculate candle distance (how many candles since last swing)
+            candles_since = len(self.candles) - abs(last_swing.index)
+
+            # Calculate price distance in bps
+            price_diff_bps = abs((price - last_swing.price) / last_swing.price) * 10000
+
+            # Skip if within dedup window (both time AND price)
+            if candles_since < self.swing_dedup_candles and price_diff_bps < self.swing_dedup_bps:
+                return  # Skip this swing (too close to last one)
+
+        # Not a duplicate - add it
+        swing = SwingPoint(
+            timestamp=timestamp,
+            price=price,
+            swing_type=swing_type,
+            index=index
+        )
+
+        self.swing_points.append(swing)
+
+        # Update last swing trackers
+        if swing_type == "high":
+            self.last_swing_high = swing
+        else:
+            self.last_swing_low = swing
 
     def calculate_wma(self, period: int, price_type: str = 'weighted_close') -> Optional[float]:
         """
@@ -179,4 +281,51 @@ class CandleBuilder:
                 'low': self.current_candle.low,
                 'close': self.current_candle.close
             }
+        }
+
+    def get_structure(self) -> List[SwingPoint]:
+        """
+        Get all detected swing points.
+
+        Returns:
+            List of SwingPoint objects in chronological order
+        """
+        return self.swing_points.copy()
+
+    def get_last_support(self) -> Optional[SwingPoint]:
+        """
+        Get the most recent swing low (support level).
+
+        Returns:
+            Last detected SwingPoint with type "low", or None
+        """
+        return self.last_swing_low
+
+    def get_last_resistance(self) -> Optional[SwingPoint]:
+        """
+        Get the most recent swing high (resistance level).
+
+        Returns:
+            Last detected SwingPoint with type "high", or None
+        """
+        return self.last_swing_high
+
+    def get_structure_stats(self) -> dict:
+        """
+        Get market structure statistics.
+
+        Returns:
+            Dictionary with swing point counts and levels
+        """
+        highs = [sp for sp in self.swing_points if sp.swing_type == "high"]
+        lows = [sp for sp in self.swing_points if sp.swing_type == "low"]
+
+        return {
+            'total_swings': len(self.swing_points),
+            'swing_highs': len(highs),
+            'swing_lows': len(lows),
+            'last_resistance': self.last_swing_high.price if self.last_swing_high else None,
+            'last_support': self.last_swing_low.price if self.last_swing_low else None,
+            'resistance_time': self.last_swing_high.timestamp if self.last_swing_high else None,
+            'support_time': self.last_swing_low.timestamp if self.last_swing_low else None
         }
