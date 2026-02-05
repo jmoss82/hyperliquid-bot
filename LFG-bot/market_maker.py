@@ -200,7 +200,8 @@ class MarketMaker:
         # Position management parameters (Phase 3: Smart exits)
         self.take_profit_bps = 20.0      # Exit at +20 bps profit
         self.stop_loss_bps = 7.0         # Exit at -7 bps loss
-        self.min_hold_time = 10.0        # SL inactive for first 10s (filter noise)
+        self.catastrophic_stop_bps = 15.0  # Immediate exit if loss exceeds this
+        self.min_hold_time = 2.0         # SL inactive for first 2s (filter noise)
         self.max_hold_time = 120.0       # Max seconds to hold position
         self.position_check_interval = 0.1  # Check every 0.1 seconds
 
@@ -722,9 +723,10 @@ class MarketMaker:
 
         PHASE 3: Fast exit logic - ALL TAKER EXITS.
         Priority order:
-        1. Stop Loss (-7 bps) → Taker exit (active after min_hold_time only)
-        2. Take Profit (+20 bps) → Taker exit immediately
-        3. Max Hold Time (120s) → Taker exit immediately
+        1. Catastrophic Stop (-15 bps) → Taker exit immediately
+        2. Stop Loss (-7 bps) → Taker exit (active after min_hold_time only)
+        3. Take Profit (+20 bps) → Taker exit immediately
+        4. Max Hold Time (120s) → Taker exit immediately
 
         Args:
             entry_side: The side we entered (BUY for long, SELL for short)
@@ -736,7 +738,13 @@ class MarketMaker:
 
         print(f"\n{'='*60}", flush=True)
         print(f"[POSITION] {position_type} @ ${entry_price:.2f} | Size: {size:.4f}", flush=True)
-        print(f"[POSITION] TP: +{self.take_profit_bps} bps | SL: -{self.stop_loss_bps} bps | Max: {self.max_hold_time}s", flush=True)
+        print(
+            f"[POSITION] TP: +{self.take_profit_bps} bps | "
+            f"SL: -{self.stop_loss_bps} bps (after {self.min_hold_time:.0f}s) | "
+            f"Catastrophic: -{self.catastrophic_stop_bps} bps | "
+            f"Max: {self.max_hold_time}s",
+            flush=True
+        )
         print(f"{'='*60}\n", flush=True)
 
         entry_time = time.time()
@@ -787,10 +795,29 @@ class MarketMaker:
                 return
 
             # ====================================================================================
-            # CONDITION 1: STOP LOSS (active only after min_hold_time)
+            # CONDITION 1: CATASTROPHIC STOP (always active)
+            # ====================================================================================
+            if pnl_bps <= -self.catastrophic_stop_bps:
+                print(
+                    f"\n[CATASTROPHIC STOP] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) "
+                    f"<= -{self.catastrophic_stop_bps} bps",
+                    flush=True
+                )
+                print(f"[CATASTROPHIC STOP] Exiting {position_type} as TAKER", flush=True)
+                await self.exit_position_fast(entry_side, entry_price, size)
+                self.active_orders.clear()
+                self.open_positions = 0
+                return
+
+            # ====================================================================================
+            # CONDITION 2: STOP LOSS (active only after min_hold_time)
             # ====================================================================================
             if elapsed >= self.min_hold_time and pnl_bps <= -self.stop_loss_bps:
-                print(f"\n[STOP LOSS] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) <= -{self.stop_loss_bps} bps | held {elapsed:.1f}s", flush=True)
+                print(
+                    f"\n[STOP LOSS] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) "
+                    f"<= -{self.stop_loss_bps} bps | held {elapsed:.1f}s",
+                    flush=True
+                )
                 print(f"[STOP LOSS] Exiting {position_type} as TAKER", flush=True)
                 await self.exit_position_fast(entry_side, entry_price, size)
                 self.active_orders.clear()
@@ -798,7 +825,7 @@ class MarketMaker:
                 return
 
             # ====================================================================================
-            # CONDITION 2: TAKE PROFIT
+            # CONDITION 3: TAKE PROFIT
             # ====================================================================================
             if pnl_bps >= self.take_profit_bps:
                 print(f"\n[TAKE PROFIT] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) >= +{self.take_profit_bps} bps", flush=True)
@@ -809,7 +836,7 @@ class MarketMaker:
                 return
 
             # ====================================================================================
-            # CONDITION 3: MAX HOLD TIME
+            # CONDITION 4: MAX HOLD TIME
             # ====================================================================================
             if elapsed >= self.max_hold_time:
                 print(f"\n[MAX TIME] Held for {elapsed:.1f}s >= {self.max_hold_time}s", flush=True)
@@ -1511,7 +1538,7 @@ class MarketMaker:
                 # EMERGENCY EXIT: Loss > $0.02
                 if pnl < -self.max_orphan_loss:
                     print(f"\n[EMERGENCY] Loss ${pnl:.4f} > ${self.max_orphan_loss:.2f} threshold")
-                    print(f"[EMERGENCY] Executing market order NOW")
+                    print(f"[EMERGENCY] Executing fast exit NOW")
 
                     if current_order:
                         try:
@@ -1519,58 +1546,12 @@ class MarketMaker:
                         except:
                             pass
 
-                    # Market order (aggressive limit that crosses spread)
                     try:
-                        # Place limit far from market to guarantee fill (taker order)
-                        if exit_side == OrderSide.SELL:
-                            aggressive_price = bid * 0.995  # 0.5% below bid
-                        else:
-                            aggressive_price = ask * 1.005  # 0.5% above ask
-
-                        aggressive_price = self.client.format_price(self.coin, aggressive_price)
-
-                        market_order = self.client.place_limit_order(
-                            coin=self.coin,
-                            side=exit_side,
-                            price=aggressive_price,
-                            size=filled_order.size,
-                            reduce_only=True,
-                            post_only=False,  # Allow crossing spread (taker)
-                            dry_run=self.dry_run
+                        await self.exit_position_fast(
+                            filled_order.side,
+                            filled_order.price,
+                            filled_order.size
                         )
-
-                        if market_order:
-                            self.orphan_market_orders += 1
-                            current_order = TrackedOrder(
-                                side=exit_side,
-                                price=aggressive_price,
-                                size=filled_order.size,
-                                order_id=market_order.order_id,
-                                status="OPEN",
-                                timestamp=datetime.now(timezone.utc).timestamp()
-                            )
-                            print(f"[EMERGENCY EXIT] Order placed @ ${aggressive_price:.2f} | Waiting for fill...", flush=True)
-
-                            # Wait up to 3 seconds for market order to fill
-                            emergency_wait_start = datetime.now(timezone.utc).timestamp()
-                            while datetime.now(timezone.utc).timestamp() - emergency_wait_start < 3.0:
-                                await asyncio.sleep(0.2)
-                                try:
-                                    open_orders = self.client.get_open_orders(self.coin)
-                                    open_order_ids = {o.order_id for o in open_orders}
-
-                                    if market_order.order_id not in open_order_ids:
-                                        # Filled!
-                                        wait_time = datetime.now(timezone.utc).timestamp() - emergency_wait_start
-                                        loss = abs(pnl)
-                                        self.total_loss += loss
-                                        print(f"[EMERGENCY EXIT] Filled after {wait_time:.1f}s wait | Loss: ${loss:.4f}", flush=True)
-                                        break
-                                except Exception as e:
-                                    print(f"[ERROR] Checking emergency fill: {e}", flush=True)
-                            else:
-                                # Timeout waiting for fill - cleanup will cancel it
-                                print(f"[WARNING] Emergency order did not fill after 3s - cleanup will cancel", flush=True)
                     except Exception as e:
                         print(f"[ERROR] Emergency exit failed: {e}", flush=True)
 
@@ -1646,7 +1627,7 @@ class MarketMaker:
                     except Exception as e:
                         print(f"[ERROR] Phase 2 order failed: {e}")
 
-                # PHASE 3: Market order kill (5s+)
+                # PHASE 3: Fast exit kill (5s+)
                 elif elapsed >= self.orphan_max_time:
                     phase = 3
                     print(f"\n[KILL] Max time ({self.orphan_max_time}s) reached")
@@ -1658,58 +1639,12 @@ class MarketMaker:
                         except:
                             pass
 
-                    # Market order (aggressive limit that crosses spread)
                     try:
-                        # Place limit far from market to guarantee fill (taker order)
-                        if exit_side == OrderSide.SELL:
-                            aggressive_price = bid * 0.995  # 0.5% below bid
-                        else:
-                            aggressive_price = ask * 1.005  # 0.5% above ask
-
-                        aggressive_price = self.client.format_price(self.coin, aggressive_price)
-
-                        market_order = self.client.place_limit_order(
-                            coin=self.coin,
-                            side=exit_side,
-                            price=aggressive_price,
-                            size=filled_order.size,
-                            reduce_only=True,
-                            post_only=False,  # Allow crossing spread (taker)
-                            dry_run=self.dry_run
+                        await self.exit_position_fast(
+                            filled_order.side,
+                            filled_order.price,
+                            filled_order.size
                         )
-
-                        if market_order:
-                            self.orphan_market_orders += 1
-                            current_order = TrackedOrder(
-                                side=exit_side,
-                                price=aggressive_price,
-                                size=filled_order.size,
-                                order_id=market_order.order_id,
-                                status="OPEN",
-                                timestamp=datetime.now(timezone.utc).timestamp()
-                            )
-                            print(f"[MARKET EXIT] Order placed @ ${aggressive_price:.2f} | Waiting for fill...", flush=True)
-
-                            # Wait up to 3 seconds for market order to fill
-                            market_wait_start = datetime.now(timezone.utc).timestamp()
-                            while datetime.now(timezone.utc).timestamp() - market_wait_start < 3.0:
-                                await asyncio.sleep(0.2)
-                                try:
-                                    open_orders = self.client.get_open_orders(self.coin)
-                                    open_order_ids = {o.order_id for o in open_orders}
-
-                                    if market_order.order_id not in open_order_ids:
-                                        # Filled!
-                                        wait_time = datetime.now(timezone.utc).timestamp() - market_wait_start
-                                        estimated_loss = abs(pnl) if pnl < 0 else 0
-                                        self.total_loss += estimated_loss
-                                        print(f"[MARKET EXIT] Filled after {wait_time:.1f}s wait | Est. Loss: ${estimated_loss:.4f}", flush=True)
-                                        break
-                                except Exception as e:
-                                    print(f"[ERROR] Checking market fill: {e}", flush=True)
-                            else:
-                                # Timeout waiting for fill - cleanup will cancel it
-                                print(f"[WARNING] Market order did not fill after 3s - cleanup will cancel", flush=True)
                     except Exception as e:
                         print(f"[ERROR] Market exit failed: {e}", flush=True)
 
@@ -1866,6 +1801,7 @@ class MarketMaker:
         print(f"\nPosition Management:")
         print(f"  Take Profit:      +{self.take_profit_bps:.0f} bps")
         print(f"  Stop Loss:        -{self.stop_loss_bps:.0f} bps (active after {self.min_hold_time:.0f}s)")
+        print(f"  Catastrophic SL:  -{self.catastrophic_stop_bps:.0f} bps (always active)")
         print(f"  Max Hold Time:    {self.max_hold_time:.0f}s")
         print(f"\nSafety Limits:")
         print(f"  Max trades:       {self.max_trades}")

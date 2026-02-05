@@ -44,6 +44,9 @@ class WMATester:
         trend_exit_bps: float = 8.0,
         wma_slope_shift_candles: int = 3,
         structure_break_buffer_bps: float = 3.0,
+        stop_loss_bps: float = 7.0,
+        catastrophic_stop_bps: float = 15.0,
+        min_hold_candles: int = 1,
         max_hold_candles: int = 24,
         max_reconnect_attempts: int = 0,
     ):
@@ -60,6 +63,9 @@ class WMATester:
         self.trend_exit_bps = trend_exit_bps
         self.wma_slope_shift_candles = wma_slope_shift_candles
         self.structure_break_buffer_bps = structure_break_buffer_bps
+        self.stop_loss_bps = stop_loss_bps
+        self.catastrophic_stop_bps = catastrophic_stop_bps
+        self.min_hold_candles = min_hold_candles
         self.max_hold_candles = max_hold_candles
         self.max_reconnect_attempts = max_reconnect_attempts
 
@@ -377,6 +383,8 @@ class WMATester:
         print(f"  WMA Slope Shift:      {self.wma_slope_shift_candles} candles")
         print(f"  Trend Enter/Exit:     {self.trend_enter_bps:.1f} / {self.trend_exit_bps:.1f} bps")
         print(f"  Structure Buffer:     {self.structure_break_buffer_bps:.1f} bps")
+        print(f"  Stop Loss (paper):    -{self.stop_loss_bps:.1f} bps (after {self.min_hold_candles} candles)")
+        print(f"  Catastrophic (paper): -{self.catastrophic_stop_bps:.1f} bps (always on)")
         print(f"  Max Hold (paper):     {self.max_hold_candles} candles")
         print("\n  Swing Detection:      Asymmetric (180 left / 12 right)")
         print("  Structure Warmup:     193 candles (~16 minutes)")
@@ -458,22 +466,27 @@ class WMATester:
                                     self.paper_hold_candles += 1
                                     side = self.paper_position["side"]
                                     exit_reason = None
+                                    entry_price = self.paper_position["entry_price"]
+                                    exit_price = bid if side == "LONG" else ask
+                                    if side == "LONG":
+                                        pnl_bps = ((exit_price - entry_price) / entry_price) * 10000
+                                    else:
+                                        pnl_bps = ((entry_price - exit_price) / entry_price) * 10000
 
-                                    if side == "LONG" and trend == "DOWN":
+                                    if pnl_bps <= -self.catastrophic_stop_bps:
+                                        exit_reason = f"catastrophic stop <= -{self.catastrophic_stop_bps:.1f} bps"
+                                    elif side == "LONG" and trend == "DOWN":
                                         exit_reason = "trend flip to DOWN"
-                                        exit_price = bid
                                     elif side == "SHORT" and trend == "UP":
                                         exit_reason = "trend flip to UP"
-                                        exit_price = ask
                                     elif side == "LONG" and signal["signal"] == "SHORT":
                                         exit_reason = "opposite unified signal"
-                                        exit_price = bid
                                     elif side == "SHORT" and signal["signal"] == "LONG":
                                         exit_reason = "opposite unified signal"
-                                        exit_price = ask
+                                    elif self.paper_hold_candles >= self.min_hold_candles and pnl_bps <= -self.stop_loss_bps:
+                                        exit_reason = f"stop loss <= -{self.stop_loss_bps:.1f} bps"
                                     elif self.paper_hold_candles >= self.max_hold_candles:
                                         exit_reason = "max hold reached"
-                                        exit_price = bid if side == "LONG" else ask
 
                                     if exit_reason:
                                         self._close_paper_position(exit_price, timestamp, exit_reason)
