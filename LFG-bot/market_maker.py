@@ -69,6 +69,8 @@ class MarketMaker:
         max_candles: int = 400,
         trend_enter_bps: float = 4.0,
         trend_exit_bps: float = 8.0,
+        wma_slope_shift_candles: int = 3,
+        min_wma_slope_bps: float = 0.8,
     ):
         self.client = client
         self.coin = coin
@@ -130,6 +132,8 @@ class MarketMaker:
         self.wma_threshold = wma_threshold
         self.trend_enter_bps = trend_enter_bps
         self.trend_exit_bps = trend_exit_bps
+        self.wma_slope_shift_candles = wma_slope_shift_candles
+        self.min_wma_slope_bps = min_wma_slope_bps
 
         # Trend state tracking
         self.last_trend = "UNKNOWN"
@@ -141,8 +145,7 @@ class MarketMaker:
         # Streak tracking
         self.required_streak = 5  # 5-in-a-row to trigger entry
         self.up_streak = 0
-        self.down_streak = 0
-        self.desired_position: Optional[str] = None  # "LONG", "SHORT", or None
+        self.down_streak = 0        self.desired_position: Optional[str] = None  # "LONG", "SHORT", or None
 
         # Position management parameters (Streak exits)
         self.stop_loss_pct = 0.06        # Exit at -6% of position notional
@@ -315,6 +318,7 @@ class MarketMaker:
                 print(f"[COOLDOWN] {cooldown_remaining:.1f}s remaining before next placement", flush=True)
                 self.open_positions = 0
                 self.entry_in_flight = False
+                self.position = None
                 return
 
         # ====================================================================================
@@ -404,6 +408,7 @@ class MarketMaker:
         self.last_placement_time = time.time()
 
         # Track entry side for stats
+        self.position = "LONG" if side == OrderSide.BUY else "SHORT"
         if side == OrderSide.BUY:
             self.long_entries += 1
         else:
@@ -413,7 +418,8 @@ class MarketMaker:
         self.desired_position = None
         self.up_streak = 0
         self.down_streak = 0
-
+        self.position = None  # "LONG", "SHORT", or None
+        
         # Check if already filled during placement
         if hasattr(order, 'status') and order.status and 'filled' in str(order.status).lower():
             print(f"[INSTANT FILL] Order filled immediately!", flush=True)
@@ -497,6 +503,7 @@ class MarketMaker:
                 await self.exit_position_fast(entry_side, entry_price, size)
                 self.open_positions = 0
                 self.entry_in_flight = False
+                self.position = None
                 return
 
             # ====================================================================================
@@ -507,6 +514,7 @@ class MarketMaker:
                 await self.exit_position_fast(entry_side, entry_price, size)
                 self.open_positions = 0
                 self.entry_in_flight = False
+                self.position = None
                 return
 
             if entry_side == OrderSide.SELL and self.desired_position == "LONG":
@@ -514,6 +522,7 @@ class MarketMaker:
                 await self.exit_position_fast(entry_side, entry_price, size)
                 self.open_positions = 0
                 self.entry_in_flight = False
+                self.position = None
                 return
 
             # ====================================================================================
@@ -631,25 +640,47 @@ class MarketMaker:
             return candle.mid_price()
         return candle.close
 
-    def trend_from_price(self, wma: Optional[float], price: Optional[float]) -> str:
-        """Classify trend from a given price vs WMA."""
+    
+    def get_wma_slope_bps(self) -> float:
+        candles = self.candle_builder.candles
+        if len(candles) <= self.wma_slope_shift_candles:
+            return 0.0
+        current = candles[-1]
+        past = candles[-1 - self.wma_slope_shift_candles]
+        current_price = self.candle_price(current)
+        past_price = self.candle_price(past)
+        if not past_price:
+            return 0.0
+        return ((current_price - past_price) / past_price) * 10000
+
+def trend_from_price(self, wma: Optional[float], price: Optional[float], slope_bps: float) -> str:
+        """Classify raw trend (no hysteresis) using distance + slope."""
         if wma is None or price is None:
             return "UNKNOWN"
-        upper = wma * (1 + self.wma_threshold)
-        lower = wma * (1 - self.wma_threshold)
-        if price > upper:
+        distance_bps = ((price - wma) / wma) * 10000
+        if distance_bps >= self.trend_enter_bps and slope_bps >= self.min_wma_slope_bps:
             return "UP"
-        if price < lower:
+        if distance_bps <= -self.trend_enter_bps and slope_bps <= -self.min_wma_slope_bps:
             return "DOWN"
         return "FLAT"
 
     def update_trend_state(self, wma: Optional[float], price: Optional[float]) -> str:
-        """
-        Hysteresis trend state machine based on bps distance to WMA.
-        """
-        if wma is None or price is None or wma == 0:
-            self.trend_state = "UNKNOWN"
+        """Trend state machine based on distance to WMA + slope filter."""
+        if not wma or not price:
             return self.trend_state
+
+        distance_bps = ((price - wma) / wma) * 10000
+        slope_bps = self.get_wma_slope_bps()
+
+        if distance_bps >= self.trend_enter_bps and slope_bps >= self.min_wma_slope_bps:
+            self.trend_state = "UP"
+        elif distance_bps <= -self.trend_enter_bps and slope_bps <= -self.min_wma_slope_bps:
+            self.trend_state = "DOWN"
+        else:
+            if abs(distance_bps) <= self.trend_exit_bps:
+                self.trend_state = "FLAT"
+
+        return self.trend_state
 
         delta_bps = ((price - wma) / wma) * 10000
 
@@ -748,32 +779,51 @@ class MarketMaker:
                                 if completed_candle:
                                     eval_price = self.candle_price(completed_candle)
                                     wma = self.candle_builder.calculate_wma(self.wma_period, self.wma_price_type)
-                                    raw_trend = self.trend_from_price(wma, eval_price)
+                                    slope_bps = self.get_wma_slope_bps()
+                                    raw_trend = self.trend_from_price(wma, eval_price, slope_bps)
                                     trend = self.update_trend_state(wma, eval_price)
+                                    distance_bps = None
+                                    if wma and eval_price:
+                                        distance_bps = ((eval_price - wma) / wma) * 10000
 
                                     self.last_eval_price = eval_price
                                     self.last_wma = wma
                                     self.last_raw_trend = raw_trend
+                                    if trend != self.last_trend:
+                                        print(f"
+{'='*60}", flush=True)
+                                        print(f"[WMA TREND CHANGE] {self.last_trend} -> {trend} (raw {raw_trend})", flush=True)
+                                        if wma and eval_price:
+                                            print(f"Price: ${eval_price:.3f} | WMA: ${wma:.3f} | Slope: {slope_bps:+.1f} bps", flush=True)
+                                        print(f"Candles: {len(self.candle_builder.candles)}", flush=True)
+                                        print(f"{'='*60}
+", flush=True)
+                                        if self.last_trend == "UP" and trend != "UP":
+                                            self.up_streak = 0
+                                        if self.last_trend == "DOWN" and trend != "DOWN":
+                                            self.down_streak = 0
+                                        self.last_trend = trend
+
                                     if trend == "UP":
                                         self.up_streak += 1
                                         self.down_streak = 0
-                                        if self.desired_position == "SHORT":
-                                            self.desired_position = None
                                     elif trend == "DOWN":
                                         self.down_streak += 1
                                         self.up_streak = 0
-                                        if self.desired_position == "LONG":
-                                            self.desired_position = None
-                                    else:
-                                        self.up_streak = 0
-                                        self.down_streak = 0
-                                        self.desired_position = None
 
-                                    if self.desired_position is None:
-                                        if self.up_streak == self.required_streak:
-                                            self.desired_position = "LONG"
-                                        elif self.down_streak == self.required_streak:
-                                            self.desired_position = "SHORT"
+                                    desired_position = None
+                                    if self.up_streak >= self.required_streak:
+                                        desired_position = "LONG"
+                                    elif self.down_streak >= self.required_streak:
+                                        desired_position = "SHORT"
+
+                                    if desired_position is not None and desired_position != self.position:
+                                        self.desired_position = desired_position
+                                        self.position = desired_position
+                                        print(
+                                            f"[STREAK] {desired_position} triggered | up={self.up_streak} down={self.down_streak}",
+                                            flush=True,
+                                        )
 
                                     # Log trend changes
                                     if trend != self.last_trend:
@@ -786,22 +836,20 @@ class MarketMaker:
                                         if self.last_trend == "UP" and trend != "UP":
                                             self.up_streak = 0
                                         if self.last_trend == "DOWN" and trend != "DOWN":
-                                            self.down_streak = 0
+                                        self.down_streak = 0
                                         self.last_trend = trend
 
-                                # Log every 100th update to show it's working
-                                if not hasattr(self, '_update_count'):
-                                    self._update_count = 0
-                                self._update_count += 1
-
-                                if self._update_count % 100 == 0:
-                                    wma_str = f"WMA: ${self.last_wma:.3f}" if self.last_wma else "WMA: Building..."
-                                    trend_str = self.last_trend
-                                    cp_str = f"${self.last_eval_price:.3f}" if self.last_eval_price else "n/a"
-
-                                    print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] "
-                                          f"Bid: ${bid:.2f} | Ask: ${ask:.2f} | "
-                                          f"Price: {cp_str} | {wma_str} | Trend: {trend_str}", flush=True)
+                                    # Status line on every completed candle (matches original monitor)
+                                    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                                    wma_str = f"{wma:.3f}" if wma else "n/a"
+                                    dist_str = f"{distance_bps:+.1f}" if distance_bps is not None else "n/a"
+                                    line = (
+                                        f"[{ts}] Price: ${eval_price:.3f} | WMA: ${wma_str} | "
+                                        f"Dist: {dist_str} bps | Slope: {slope_bps:+.1f} bps | "
+                                        f"Trend: {trend} | streaks U:{self.up_streak} D:{self.down_streak} | "
+                                        f"pos: {self.position or 'FLAT'}"
+                                    )
+                                    print(line, flush=True)
 
                                 # Check for opportunity only on completed candle streak
                                 if completed_candle and self.desired_position in ("LONG", "SHORT"):

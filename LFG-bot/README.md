@@ -4,9 +4,9 @@ Directional trend bot for HyperLiquid HIP-3 pairs using a WMA trend streak.
 
 This README reflects the current live strategy:
 - WMA trend state (UP/DOWN/FLAT) from completed 5s candles
-- 5-in-a-row streaks to trigger entries
+- Trend gating uses WMA distance + slope
+- 5-in-a-row streaks to trigger entries/exits
 - Market-style entries and exits (taker limit)
-- Exit on opposite 5-in-a-row or stop loss
 
 ---
 
@@ -28,14 +28,13 @@ python directional_trend_tester.py
 
 1. Build 5-second OHLC candles from live bid/ask
 2. Calculate 60-period WMA using weighted close (H+L+C+C)/4
-3. Determine trend state with hysteresis (UP/DOWN/FLAT)
-4. Count consecutive trend streaks
+3. Determine trend state using WMA distance + slope (UP/DOWN/FLAT)
+4. Count consecutive UP/DOWN streaks
 5. Enter after 5 consecutive UP (LONG) or DOWN (SHORT)
 6. Market-style entries and exits (taker limit)
 7. Exit on opposite 5-in-a-row or stop loss
 
 Notes:
-- We ignore FLAT/UNKNOWN for entries.
 - We only exit on an opposite 5-in-a-row or stop loss.
 - HIP-3 XYZ orders are limit-only; "market" is implemented as a taker limit priced through the spread.
 
@@ -64,6 +63,8 @@ mm = MarketMaker(
     max_candles=400,
     trend_enter_bps=4.0,
     trend_exit_bps=8.0,
+    wma_slope_shift_candles=3,
+    min_wma_slope_bps=0.8,
 )
 ```
 
@@ -77,7 +78,8 @@ mm = MarketMaker(
 ## Files
 
 - `market_maker.py` - Live trading bot (trend streak strategy)
-- `directional_trend_tester.py` - Manual signal monitor (5-in-a-row)
+- `directional_trend_tester.py` - Manual signal monitor
+- `directional_trend_tester_original.py` - Original reference logic
 - `candle_builder.py` - 5s candles + WMA calc
 - `account_monitor.py` - Position/balance monitoring
 - `lfg_config.py` - Credentials loader
@@ -103,14 +105,7 @@ git push
 
 ## Local Development
 
-Run live bot locally:
 ```bash
 cd LFG-bot
 python market_maker.py
-```
-
-Test directional signal (no orders):
-```bash
-cd LFG-bot
-python directional_trend_tester.py
 ```
