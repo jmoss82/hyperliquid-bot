@@ -20,7 +20,7 @@ Key parameters:
 - spread_position: Where to place orders (0=edge, 0.5=mid, default: 0.2)
 - min_trade_interval: Cooldown between trades (default: 5s)
 - take_profit_bps: Take profit threshold (default: +20 bps)
-- stop_loss_bps: Stop loss threshold (default: -7 bps)
+- stop_loss_pct: Stop loss as percent of position notional (default: 6%)
 - max_hold_time: Maximum position hold time (default: 120s)
 """
 import asyncio
@@ -196,12 +196,14 @@ class MarketMaker:
         self.last_raw_trend: str = "UNKNOWN"
         self.latest_signal: Optional[Dict] = None
         self.latest_signal_ts: Optional[float] = None
+        self.required_streak = 5
+        self.up_streak = 0
+        self.down_streak = 0
+        self.desired_position: Optional[str] = None  # "LONG", "SHORT", or None
 
         # Position management parameters (Phase 3: Smart exits)
-        self.take_profit_bps = 20.0      # Exit at +20 bps profit
-        self.stop_loss_bps = 7.0         # Exit at -7 bps loss
-        self.catastrophic_stop_bps = 15.0  # Immediate exit if loss exceeds this
-        self.min_hold_time = 2.0         # SL inactive for first 2s (filter noise)
+        self.take_profit_bps = None      # Disabled for streak strategy
+        self.stop_loss_pct = 0.06        # Exit at -6% of position notional
         self.max_hold_time = 120.0       # Max seconds to hold position
         self.position_check_interval = 0.1  # Check every 0.1 seconds
 
@@ -472,7 +474,7 @@ class MarketMaker:
 
     def should_enter(self, bid: float, ask: float) -> Optional[Opportunity]:
         """
-        Check if we should enter based on unified signal gating.
+        Check if we should enter based on trend streak gating.
 
         Returns:
             Opportunity if criteria met, None otherwise
@@ -500,26 +502,12 @@ class MarketMaker:
         if self.orphan_in_progress:
             return None
 
-        # Ensure we have a recent signal (from a completed candle)
-        if not self.latest_signal or not self.latest_signal_ts:
+        if self.desired_position not in ("LONG", "SHORT"):
             return None
-
-        age = time.monotonic() - self.latest_signal_ts
-        if age > self.signal_ttl_s:
-            return None
-
-        # Recheck spread on current quotes
         mid = (bid + ask) / 2
         spread = ask - bid
         spread_bps = (spread / mid) * 10000
-        if spread_bps < self.spread_threshold_bps:
-            return None
-
-        signal = self.latest_signal.get("signal")
-        if signal not in ("LONG", "SHORT"):
-            return None
-
-        trend = "UP" if signal == "LONG" else "DOWN"
+        trend = "UP" if self.desired_position == "LONG" else "DOWN"
         return Opportunity(
             bid=bid,
             ask=ask,
@@ -532,9 +520,9 @@ class MarketMaker:
         """
         Place single-sided order based on trend direction.
 
-        PHASE 2: One-sided momentum strategy
-        - Enter LONG when trend is UP (buy closer to ask)
-        - Enter SHORT when trend is DOWN (sell closer to bid)
+        PHASE 4: Trend streak strategy (market entries)
+        - Enter LONG after 5 consecutive UP trends
+        - Enter SHORT after 5 consecutive DOWN trends
 
         Args:
             opportunity: The market making opportunity with trend
@@ -567,18 +555,16 @@ class MarketMaker:
             return
 
         # ====================================================================================
-        # Determine side and price from trend
+        # Determine side and aggressive price from trend (taker)
         # ====================================================================================
-        spread = opportunity.ask - opportunity.bid
-
         if opportunity.trend == 'UP':
-            # Uptrend: Place BUY order (closer to ask to catch momentum)
+            # Uptrend: Place BUY order (cross the spread)
             side = OrderSide.BUY
-            price = opportunity.ask - (spread * self.spread_position)
+            price = opportunity.ask * 1.0005
         elif opportunity.trend == 'DOWN':
-            # Downtrend: Place SELL order (closer to bid to catch momentum)
+            # Downtrend: Place SELL order (cross the spread)
             side = OrderSide.SELL
-            price = opportunity.bid + (spread * self.spread_position)
+            price = opportunity.bid * 0.9995
         else:
             print(f"[ERROR] Invalid trend for entry: {opportunity.trend}", flush=True)
             return
@@ -594,7 +580,7 @@ class MarketMaker:
         print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}", flush=True)
 
         # ====================================================================================
-        # PLACE SINGLE ORDER: Post-only limit order
+        # PLACE SINGLE ORDER: Aggressive limit (taker)
         # ====================================================================================
         try:
             order = self.client.place_limit_order(
@@ -603,7 +589,7 @@ class MarketMaker:
                 price=price,
                 size=position_size,
                 reduce_only=False,
-                post_only=True,  # Maker order only
+                post_only=False,  # Taker order
                 dry_run=self.dry_run
             )
         except Exception as e:
@@ -723,10 +709,9 @@ class MarketMaker:
 
         PHASE 3: Fast exit logic - ALL TAKER EXITS.
         Priority order:
-        1. Catastrophic Stop (-15 bps) → Taker exit immediately
-        2. Stop Loss (-7 bps) → Taker exit (active after min_hold_time only)
-        3. Take Profit (+20 bps) → Taker exit immediately
-        4. Max Hold Time (120s) → Taker exit immediately
+        1. Stop Loss (-6% notional) → Taker exit immediately
+        2. Take Profit (+20 bps) → Taker exit immediately
+        3. Max Hold Time (120s) → Taker exit immediately
 
         Args:
             entry_side: The side we entered (BUY for long, SELL for short)
@@ -734,14 +719,12 @@ class MarketMaker:
             size: Position size
         """
         position_type = "LONG" if entry_side == OrderSide.BUY else "SHORT"
-        entry_trend = self.last_trend  # Remember trend at entry
-
         print(f"\n{'='*60}", flush=True)
         print(f"[POSITION] {position_type} @ ${entry_price:.2f} | Size: {size:.4f}", flush=True)
+        tp_str = "disabled" if self.take_profit_bps is None else f"+{self.take_profit_bps} bps"
         print(
-            f"[POSITION] TP: +{self.take_profit_bps} bps | "
-            f"SL: -{self.stop_loss_bps} bps (after {self.min_hold_time:.0f}s) | "
-            f"Catastrophic: -{self.catastrophic_stop_bps} bps | "
+            f"[POSITION] TP: {tp_str} | "
+            f"SL: -{self.stop_loss_pct:.2%} notional | "
             f"Max: {self.max_hold_time}s",
             flush=True
         )
@@ -778,44 +761,13 @@ class MarketMaker:
             elapsed = time.time() - entry_time
 
             # ====================================================================================
-            # CONDITION 0: TREND FLIP EXIT
+            # CONDITION 1: STOP LOSS (percent of notional)
             # ====================================================================================
-            if entry_side == OrderSide.BUY and current_trend == "DOWN":
-                print(f"\n[TREND FLIP] Trend turned DOWN - exiting LONG", flush=True)
-                await self.exit_position_fast(entry_side, entry_price, size)
-                self.active_orders.clear()
-                self.open_positions = 0
-                return
-
-            if entry_side == OrderSide.SELL and current_trend == "UP":
-                print(f"\n[TREND FLIP] Trend turned UP - exiting SHORT", flush=True)
-                await self.exit_position_fast(entry_side, entry_price, size)
-                self.active_orders.clear()
-                self.open_positions = 0
-                return
-
-            # ====================================================================================
-            # CONDITION 1: CATASTROPHIC STOP (always active)
-            # ====================================================================================
-            if pnl_bps <= -self.catastrophic_stop_bps:
-                print(
-                    f"\n[CATASTROPHIC STOP] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) "
-                    f"<= -{self.catastrophic_stop_bps} bps",
-                    flush=True
-                )
-                print(f"[CATASTROPHIC STOP] Exiting {position_type} as TAKER", flush=True)
-                await self.exit_position_fast(entry_side, entry_price, size)
-                self.active_orders.clear()
-                self.open_positions = 0
-                return
-
-            # ====================================================================================
-            # CONDITION 2: STOP LOSS (active only after min_hold_time)
-            # ====================================================================================
-            if elapsed >= self.min_hold_time and pnl_bps <= -self.stop_loss_bps:
+            max_loss_dollars = entry_price * size * self.stop_loss_pct
+            if pnl_dollars <= -max_loss_dollars:
                 print(
                     f"\n[STOP LOSS] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) "
-                    f"<= -{self.stop_loss_bps} bps | held {elapsed:.1f}s",
+                    f"<= -{self.stop_loss_pct:.2%} notional (${max_loss_dollars:.4f})",
                     flush=True
                 )
                 print(f"[STOP LOSS] Exiting {position_type} as TAKER", flush=True)
@@ -825,18 +777,24 @@ class MarketMaker:
                 return
 
             # ====================================================================================
-            # CONDITION 3: TAKE PROFIT
+            # CONDITION 2: OPPOSITE STREAK EXIT (5 in a row)
             # ====================================================================================
-            if pnl_bps >= self.take_profit_bps:
-                print(f"\n[TAKE PROFIT] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) >= +{self.take_profit_bps} bps", flush=True)
-                print(f"[TAKE PROFIT] Exiting {position_type} as TAKER", flush=True)
+            if entry_side == OrderSide.BUY and self.desired_position == "SHORT":
+                print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting LONG", flush=True)
+                await self.exit_position_fast(entry_side, entry_price, size)
+                self.active_orders.clear()
+                self.open_positions = 0
+                return
+
+            if entry_side == OrderSide.SELL and self.desired_position == "LONG":
+                print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting SHORT", flush=True)
                 await self.exit_position_fast(entry_side, entry_price, size)
                 self.active_orders.clear()
                 self.open_positions = 0
                 return
 
             # ====================================================================================
-            # CONDITION 4: MAX HOLD TIME
+            # CONDITION 3: MAX HOLD TIME
             # ====================================================================================
             if elapsed >= self.max_hold_time:
                 print(f"\n[MAX TIME] Held for {elapsed:.1f}s >= {self.max_hold_time}s", flush=True)
@@ -1799,9 +1757,11 @@ class MarketMaker:
         print(f"  WMA Slope Shift:  {self.wma_slope_shift_candles} candles")
         print(f"  Structure Buffer: {self.structure_break_buffer_bps:.1f} bps")
         print(f"\nPosition Management:")
-        print(f"  Take Profit:      +{self.take_profit_bps:.0f} bps")
-        print(f"  Stop Loss:        -{self.stop_loss_bps:.0f} bps (active after {self.min_hold_time:.0f}s)")
-        print(f"  Catastrophic SL:  -{self.catastrophic_stop_bps:.0f} bps (always active)")
+        if self.take_profit_bps is None:
+            print(f"  Take Profit:      disabled")
+        else:
+            print(f"  Take Profit:      +{self.take_profit_bps:.0f} bps")
+        print(f"  Stop Loss:        -{self.stop_loss_pct:.2%} notional (immediate)")
         print(f"  Max Hold Time:    {self.max_hold_time:.0f}s")
         print(f"\nSafety Limits:")
         print(f"  Max trades:       {self.max_trades}")
@@ -1862,16 +1822,22 @@ class MarketMaker:
                                     self.last_eval_price = eval_price
                                     self.last_wma = wma
                                     self.last_raw_trend = raw_trend
+                                    if trend == "UP":
+                                        self.up_streak += 1
+                                        self.down_streak = 0
+                                    elif trend == "DOWN":
+                                        self.down_streak += 1
+                                        self.up_streak = 0
+                                    else:
+                                        self.up_streak = 0
+                                        self.down_streak = 0
 
-                                    signal = self.unified_signal(
-                                        bid=bid,
-                                        ask=ask,
-                                        eval_price=eval_price,
-                                        wma=wma,
-                                        trend=trend,
-                                    )
-                                    self.latest_signal = signal
-                                    self.latest_signal_ts = time.monotonic()
+                                    if self.up_streak >= self.required_streak:
+                                        self.desired_position = "LONG"
+                                    elif self.down_streak >= self.required_streak:
+                                        self.desired_position = "SHORT"
+                                    else:
+                                        self.desired_position = None
 
                                     # Log trend changes
                                     if trend != self.last_trend:
@@ -1881,6 +1847,10 @@ class MarketMaker:
                                             print(f"Price: ${eval_price:.3f} | WMA: ${wma:.3f}", flush=True)
                                         print(f"Candles: {len(self.candle_builder.candles)}", flush=True)
                                         print(f"{'='*60}\n", flush=True)
+                                        if self.last_trend == "UP" and trend != "UP":
+                                            self.up_streak = 0
+                                        if self.last_trend == "DOWN" and trend != "DOWN":
+                                            self.down_streak = 0
                                         self.last_trend = trend
 
                                 # Calculate spread for logging
@@ -1902,12 +1872,11 @@ class MarketMaker:
                                           f"Spread: ${spread_abs:.2f} ({spread_bps:.2f} bps) | "
                                           f"Price: {cp_str} | {wma_str} | Trend: {trend_str}", flush=True)
 
-                                # Check for opportunity only on completed candle signal
-                                if completed_candle and self.latest_signal:
-                                    if self.latest_signal.get("signal") in ("LONG", "SHORT"):
-                                        opportunity = self.should_enter(bid, ask)
-                                        if opportunity:
-                                            self.enqueue_opportunity(opportunity)
+                                # Check for opportunity only on completed candle streak
+                                if completed_candle and self.desired_position in ("LONG", "SHORT"):
+                                    opportunity = self.should_enter(bid, ask)
+                                    if opportunity:
+                                        self.enqueue_opportunity(opportunity)
 
                     except Exception as e:
                         print(f"[ERROR] {e}")
