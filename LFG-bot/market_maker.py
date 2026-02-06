@@ -265,6 +265,9 @@ class MarketMaker:
 
         # Don't enter if already at position limit
         if self.open_positions >= self.max_positions:
+            if not hasattr(self, '_position_limit_log_ts') or time.time() - self._position_limit_log_ts > 10:
+                print(f"[BLOCKED] Already have {self.open_positions} position(s) - ignoring signal", flush=True)
+                self._position_limit_log_ts = time.time()
             return None
 
         if self.desired_position not in ("LONG", "SHORT"):
@@ -291,6 +294,12 @@ class MarketMaker:
         self.opportunities_seen += 1
 
         # ====================================================================================
+        # GATE: Block any new entries immediately (prevents race condition)
+        # ====================================================================================
+        print(f"[ENTRY GATE] Setting open_positions=1 to block duplicates", flush=True)
+        self.open_positions = 1
+
+        # ====================================================================================
         # COOLDOWN: Enforce minimum time between order placements
         # ====================================================================================
         if self.last_placement_time > 0:
@@ -298,6 +307,7 @@ class MarketMaker:
             if time_since_last < self.min_trade_interval:
                 cooldown_remaining = self.min_trade_interval - time_since_last
                 print(f"[COOLDOWN] {cooldown_remaining:.1f}s remaining before next placement", flush=True)
+                self.open_positions = 0
                 return
 
         # ====================================================================================
@@ -305,6 +315,7 @@ class MarketMaker:
         # ====================================================================================
         if not await self.ensure_fresh_quote("place_order"):
             print(f"[BLOCKED] Cannot place order - stale quote.", flush=True)
+            self.open_positions = 0
             return
 
         # ====================================================================================
@@ -320,6 +331,7 @@ class MarketMaker:
             price = opportunity.bid * 0.9995
         else:
             print(f"[ERROR] Invalid trend for entry: {opportunity.trend}", flush=True)
+            self.open_positions = 0
             return
 
         # Calculate size to meet minimum notional
@@ -347,13 +359,15 @@ class MarketMaker:
             )
         except Exception as e:
             print(f"[ERROR] Order placement failed: {e}", flush=True)
+            self.open_positions = 0
             return
 
         # ====================================================================================
-        # CHECK RESPONSE: If rejected, just move on (no cleanup needed)
+        # CHECK RESPONSE: If rejected, reset and move on
         # ====================================================================================
         if not order or not order.order_id:
             print(f"[REJECTED] Order was rejected", flush=True)
+            self.open_positions = 0
             return
 
         print(f"[SUCCESS] Order accepted! ID: {order.order_id}", flush=True)
@@ -367,15 +381,15 @@ class MarketMaker:
         else:
             self.short_entries += 1
 
+        # CRITICAL: Clear desired_position immediately to prevent duplicate entries
+        self.desired_position = None
+
         # Check if already filled during placement
         if hasattr(order, 'status') and order.status and 'filled' in str(order.status).lower():
             print(f"[INSTANT FILL] Order filled immediately!", flush=True)
             self.one_filled += 1
-            self.open_positions = 1
             await self.monitor_position(order.side, order.price, order.size)
             return
-
-        self.open_positions = 1
 
         # Confirm position before monitoring exits
         try:
