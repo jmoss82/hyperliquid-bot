@@ -90,6 +90,7 @@ class MarketMaker:
 
         # Position tracking
         self.open_positions = 0
+        self.entry_in_flight = False
 
         # Stats
         self.opportunities_seen = 0
@@ -263,6 +264,10 @@ class MarketMaker:
             print(f"\n[SAFETY] Max loss reached (${net_pnl:.2f}). Stopping.")
             return None
 
+        # Don't enter if an entry is in flight
+        if self.entry_in_flight:
+            return None
+
         # Don't enter if already at position limit
         if self.open_positions >= self.max_positions:
             if not hasattr(self, '_position_limit_log_ts') or time.time() - self._position_limit_log_ts > 10:
@@ -298,6 +303,7 @@ class MarketMaker:
         # ====================================================================================
         print(f"[ENTRY GATE] Setting open_positions=1 to block duplicates", flush=True)
         self.open_positions = 1
+        self.entry_in_flight = True
 
         # ====================================================================================
         # COOLDOWN: Enforce minimum time between order placements
@@ -308,6 +314,7 @@ class MarketMaker:
                 cooldown_remaining = self.min_trade_interval - time_since_last
                 print(f"[COOLDOWN] {cooldown_remaining:.1f}s remaining before next placement", flush=True)
                 self.open_positions = 0
+                self.entry_in_flight = False
                 return
 
         # ====================================================================================
@@ -316,6 +323,7 @@ class MarketMaker:
         if not await self.ensure_fresh_quote("place_order"):
             print(f"[BLOCKED] Cannot place order - stale quote.", flush=True)
             self.open_positions = 0
+            self.entry_in_flight = False
             return
 
         # ====================================================================================
@@ -332,6 +340,7 @@ class MarketMaker:
         else:
             print(f"[ERROR] Invalid trend for entry: {opportunity.trend}", flush=True)
             self.open_positions = 0
+            self.entry_in_flight = False
             return
 
         # Calculate size to meet minimum notional
@@ -348,26 +357,45 @@ class MarketMaker:
         # PLACE SINGLE ORDER: Aggressive taker order
         # ====================================================================================
         try:
-            order = self.client.place_limit_order(
-                coin=self.coin,
-                side=side,
-                price=price,
-                size=position_size,
-                reduce_only=False,
-                post_only=False,  # Taker order
-                dry_run=self.dry_run
-            )
+            place_market = getattr(self.client, "place_market_order", None)
+            if callable(place_market):
+                order = place_market(
+                    coin=self.coin,
+                    side=side,
+                    size=position_size,
+                    reduce_only=False,
+                    dry_run=self.dry_run
+                )
+            else:
+                order = self.client.place_limit_order(
+                    coin=self.coin,
+                    side=side,
+                    price=price,
+                    size=position_size,
+                    reduce_only=False,
+                    post_only=False,  # Taker order
+                    dry_run=self.dry_run
+                )
         except Exception as e:
             print(f"[ERROR] Order placement failed: {e}", flush=True)
             self.open_positions = 0
+            self.entry_in_flight = False
             return
 
         # ====================================================================================
         # CHECK RESPONSE: If rejected, reset and move on
         # ====================================================================================
-        if not order or not order.order_id:
+        if not order:
             print(f"[REJECTED] Order was rejected", flush=True)
             self.open_positions = 0
+            self.entry_in_flight = False
+            return
+
+        status = self._normalize_status(getattr(order, "status", None))
+        if status in ("REJECTED", "CANCELLED"):
+            print(f"[REJECTED] Order was rejected", flush=True)
+            self.open_positions = 0
+            self.entry_in_flight = False
             return
 
         print(f"[SUCCESS] Order accepted! ID: {order.order_id}", flush=True)
@@ -383,6 +411,8 @@ class MarketMaker:
 
         # CRITICAL: Clear desired_position immediately to prevent duplicate entries
         self.desired_position = None
+        self.up_streak = 0
+        self.down_streak = 0
 
         # Check if already filled during placement
         if hasattr(order, 'status') and order.status and 'filled' in str(order.status).lower():
@@ -466,6 +496,7 @@ class MarketMaker:
                 print(f"[STOP LOSS] Exiting {position_type} as TAKER", flush=True)
                 await self.exit_position_fast(entry_side, entry_price, size)
                 self.open_positions = 0
+                self.entry_in_flight = False
                 return
 
             # ====================================================================================
@@ -475,12 +506,14 @@ class MarketMaker:
                 print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting LONG", flush=True)
                 await self.exit_position_fast(entry_side, entry_price, size)
                 self.open_positions = 0
+                self.entry_in_flight = False
                 return
 
             if entry_side == OrderSide.SELL and self.desired_position == "LONG":
                 print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting SHORT", flush=True)
                 await self.exit_position_fast(entry_side, entry_price, size)
                 self.open_positions = 0
+                self.entry_in_flight = False
                 return
 
             # ====================================================================================
@@ -724,19 +757,23 @@ class MarketMaker:
                                     if trend == "UP":
                                         self.up_streak += 1
                                         self.down_streak = 0
+                                        if self.desired_position == "SHORT":
+                                            self.desired_position = None
                                     elif trend == "DOWN":
                                         self.down_streak += 1
                                         self.up_streak = 0
+                                        if self.desired_position == "LONG":
+                                            self.desired_position = None
                                     else:
                                         self.up_streak = 0
                                         self.down_streak = 0
-
-                                    if self.up_streak >= self.required_streak:
-                                        self.desired_position = "LONG"
-                                    elif self.down_streak >= self.required_streak:
-                                        self.desired_position = "SHORT"
-                                    else:
                                         self.desired_position = None
+
+                                    if self.desired_position is None:
+                                        if self.up_streak == self.required_streak:
+                                            self.desired_position = "LONG"
+                                        elif self.down_streak == self.required_streak:
+                                            self.desired_position = "SHORT"
 
                                     # Log trend changes
                                     if trend != self.last_trend:

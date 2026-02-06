@@ -418,6 +418,7 @@ class XYZClient:
         reduce_only: bool = False,
         post_only: bool = True,
         dry_run: bool = True,
+            order_type_label: str = "LIMIT",
     ) -> Optional[Order]:
         """
         Place a limit order on XYZ HIP-3
@@ -529,7 +530,7 @@ class XYZClient:
                 "expiresAfter": expires_after,
             }
 
-            logger.info(f"Placing order: {side_str} {size} {coin} @ ${price:,.2f} (asset_id={asset_id})")
+            logger.info(f"Placing {order_type_label} order: {side_str} {size} {coin} @ ${price:,.2f} (asset_id={asset_id})")
             logger.debug(f"Order payload: {json.dumps(payload, indent=2)}")
 
             # Post to exchange endpoint
@@ -592,6 +593,51 @@ class XYZClient:
             import traceback
             logger.error(traceback.format_exc())
             return None
+
+    def place_market_order(
+        self,
+        coin: str,
+        side: OrderSide,
+        size: float,
+        reduce_only: bool = False,
+        slippage_bps: float = 5.0,
+        dry_run: bool = True,
+    ) -> Optional[Order]:
+        """
+        Place a market-style order using an aggressive taker limit.
+
+        For XYZ HIP-3, true market orders are not available.
+        This uses a limit order priced through the spread (Gtc) to cross immediately.
+        """
+        book = self.get_order_book(coin)
+        if not book or book.best_bid is None or book.best_ask is None:
+            logger.error(f"No order book data for {coin} - cannot place market order")
+            return None
+
+        if side == OrderSide.BUY:
+            price = book.best_ask * (1 + slippage_bps / 10000)
+        else:
+            price = book.best_bid * (1 - slippage_bps / 10000)
+
+        logger.info(
+            f"Placing MARKET order (taker limit): {side.name} {size} {coin} @ ${price:,.2f}"
+        )
+
+        order = self.place_limit_order(
+            coin=coin,
+            side=side,
+            price=price,
+            size=size,
+            reduce_only=reduce_only,
+            post_only=False,
+            dry_run=dry_run,
+            order_type_label="MARKET",
+        )
+
+        if order:
+            order.order_type = OrderType.MARKET
+
+        return order
 
     def place_order_pair(
         self,

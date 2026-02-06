@@ -5,7 +5,7 @@ Directional trend bot for HyperLiquid HIP-3 pairs using a WMA trend streak.
 This README reflects the current live strategy:
 - WMA trend state (UP/DOWN/FLAT) from completed 5s candles
 - 5-in-a-row streaks to trigger entries
-- Market (taker) entries and exits
+- Market-style entries and exits (taker limit)
 - Exit on opposite 5-in-a-row or stop loss
 
 ---
@@ -24,19 +24,20 @@ python directional_trend_tester.py
 
 ---
 
-## Strategy (Trend Streak + Market Orders)
+## Strategy (Trend Streak + Market-Style Orders)
 
 1. Build 5-second OHLC candles from live bid/ask
 2. Calculate 60-period WMA using weighted close (H+L+C+C)/4
 3. Determine trend state with hysteresis (UP/DOWN/FLAT)
 4. Count consecutive trend streaks
 5. Enter after 5 consecutive UP (LONG) or DOWN (SHORT)
-6. Market entries and exits (taker)
+6. Market-style entries and exits (taker limit)
 7. Exit on opposite 5-in-a-row or stop loss
 
 Notes:
 - We ignore FLAT/UNKNOWN for entries.
 - We only exit on an opposite 5-in-a-row or stop loss.
+- HIP-3 XYZ orders are limit-only; "market" is implemented as a taker limit priced through the spread.
 
 ---
 
@@ -49,6 +50,9 @@ mm = MarketMaker(
     client=client,
     coin="xyz:SILVER",
     position_size_usd=11.0,
+    max_positions=1,
+    max_trades=999999,
+    max_loss=5.0,
     min_trade_interval=0.0,
     dry_run=False,
     max_quote_age_ms=1200.0,
