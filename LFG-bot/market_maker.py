@@ -145,10 +145,11 @@ class MarketMaker:
         # Streak tracking
         self.required_streak = 5  # 5-in-a-row to trigger entry
         self.up_streak = 0
-        self.down_streak = 0        self.desired_position: Optional[str] = None  # "LONG", "SHORT", or None
+        self.down_streak = 0
+        self.desired_position: Optional[str] = None  # "LONG", "SHORT", or None
 
         # Position management parameters (Streak exits)
-        self.stop_loss_pct = 0.06        # Exit at -6% of position notional
+        self.stop_loss_pct = 0.06  # Exit at -6% of position notional
         self.position_check_interval = 0.1  # Check every 0.1 seconds
 
     def _normalize_status(self, status: Optional[XYZOrderStatus]) -> str:
