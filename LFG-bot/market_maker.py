@@ -641,7 +641,6 @@ class MarketMaker:
             return candle.mid_price()
         return candle.close
 
-    
     def get_wma_slope_bps(self) -> float:
         candles = self.candle_builder.candles
         if len(candles) <= self.wma_slope_shift_candles:
@@ -654,7 +653,7 @@ class MarketMaker:
             return 0.0
         return ((current_price - past_price) / past_price) * 10000
 
-def trend_from_price(self, wma: Optional[float], price: Optional[float], slope_bps: float) -> str:
+    def trend_from_price(self, wma: Optional[float], price: Optional[float], slope_bps: float) -> str:
         """Classify raw trend (no hysteresis) using distance + slope."""
         if wma is None or price is None:
             return "UNKNOWN"
@@ -680,31 +679,6 @@ def trend_from_price(self, wma: Optional[float], price: Optional[float], slope_b
         else:
             if abs(distance_bps) <= self.trend_exit_bps:
                 self.trend_state = "FLAT"
-
-        return self.trend_state
-
-        delta_bps = ((price - wma) / wma) * 10000
-
-        if self.trend_state == "UP":
-            if delta_bps <= -self.trend_exit_bps:
-                self.trend_state = "DOWN"
-            else:
-                self.trend_state = "UP"
-            return self.trend_state
-
-        if self.trend_state == "DOWN":
-            if delta_bps >= self.trend_exit_bps:
-                self.trend_state = "UP"
-            else:
-                self.trend_state = "DOWN"
-            return self.trend_state
-
-        if delta_bps >= self.trend_enter_bps:
-            self.trend_state = "UP"
-        elif delta_bps <= -self.trend_enter_bps:
-            self.trend_state = "DOWN"
-        else:
-            self.trend_state = "FLAT"
 
         return self.trend_state
 
