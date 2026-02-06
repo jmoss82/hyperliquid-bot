@@ -765,14 +765,12 @@ class MarketMaker:
                                     self.last_wma = wma
                                     self.last_raw_trend = raw_trend
                                     if trend != self.last_trend:
-                                        print(f"
-{'='*60}", flush=True)
+                                        print(f"\n{'='*60}", flush=True)
                                         print(f"[WMA TREND CHANGE] {self.last_trend} -> {trend} (raw {raw_trend})", flush=True)
                                         if wma and eval_price:
                                             print(f"Price: ${eval_price:.3f} | WMA: ${wma:.3f} | Slope: {slope_bps:+.1f} bps", flush=True)
                                         print(f"Candles: {len(self.candle_builder.candles)}", flush=True)
-                                        print(f"{'='*60}
-", flush=True)
+                                        print(f"{'='*60}\n", flush=True)
                                         if self.last_trend == "UP" and trend != "UP":
                                             self.up_streak = 0
                                         if self.last_trend == "DOWN" and trend != "DOWN":
@@ -799,21 +797,6 @@ class MarketMaker:
                                             f"[STREAK] {desired_position} triggered | up={self.up_streak} down={self.down_streak}",
                                             flush=True,
                                         )
-
-                                    # Log trend changes
-                                    if trend != self.last_trend:
-                                        print(f"\n{'='*60}", flush=True)
-                                        print(f"[WMA TREND CHANGE] {self.last_trend} -> {trend} (raw {raw_trend})", flush=True)
-                                        if wma and eval_price:
-                                            print(f"Price: ${eval_price:.3f} | WMA: ${wma:.3f}", flush=True)
-                                        print(f"Candles: {len(self.candle_builder.candles)}", flush=True)
-                                        print(f"{'='*60}\n", flush=True)
-                                        if self.last_trend == "UP" and trend != "UP":
-                                            self.up_streak = 0
-                                        if self.last_trend == "DOWN" and trend != "DOWN":
-                                        self.down_streak = 0
-                                        self.last_trend = trend
-
                                     # Status line on every completed candle (matches original monitor)
                                     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
                                     wma_str = f"{wma:.3f}" if wma else "n/a"
