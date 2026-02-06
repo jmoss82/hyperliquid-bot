@@ -12,6 +12,7 @@ Usage:
 import asyncio
 import json
 from datetime import datetime, timezone
+from typing import Optional
 
 import websockets
 
@@ -30,8 +31,7 @@ class DirectionalTrendTester:
         max_candles: int = 400,
         trend_enter_bps: float = 4.0,
         trend_exit_bps: float = 8.0,
-        wma_slope_shift_candles: int = 3,
-        min_wma_slope_bps: float = 0.8,
+        wma_threshold: float = 0.0005,
     ):
         self.coin = coin
         self.wma_period = wma_period
@@ -40,8 +40,7 @@ class DirectionalTrendTester:
         self.max_candles = max_candles
         self.trend_enter_bps = trend_enter_bps
         self.trend_exit_bps = trend_exit_bps
-        self.wma_slope_shift_candles = wma_slope_shift_candles
-        self.min_wma_slope_bps = min_wma_slope_bps
+        self.wma_threshold = wma_threshold
 
         self.ws_url = "wss://api.hyperliquid.xyz/ws"
         self.current_bid = None
@@ -57,14 +56,6 @@ class DirectionalTrendTester:
         self.up_streak = 0
         self.down_streak = 0
         self.position = None  # "LONG", "SHORT", or None
-        self._use_colors = True
-
-        # ANSI color helpers (best-effort)
-        self._c_green = "\x1b[32m"
-        self._c_red = "\x1b[31m"
-        self._c_yellow = "\x1b[33m"
-        self._c_cyan = "\x1b[36m"
-        self._c_reset = "\x1b[0m"
 
     def candle_price(self, candle) -> float:
         if self.price_type == "weighted_close":
@@ -76,36 +67,44 @@ class DirectionalTrendTester:
     def get_wma(self):
         return self.candle_builder.calculate_wma(self.wma_period, self.price_type)
 
-    def get_wma_slope_bps(self):
-        candles = self.candle_builder.candles
-        if len(candles) <= self.wma_slope_shift_candles:
-            return 0.0
+    def trend_from_price(self, wma: Optional[float], price: Optional[float]) -> str:
+        if wma is None or price is None:
+            return "UNKNOWN"
+        upper = wma * (1 + self.wma_threshold)
+        lower = wma * (1 - self.wma_threshold)
+        if price > upper:
+            return "UP"
+        if price < lower:
+            return "DOWN"
+        return "FLAT"
 
-        current = candles[-1]
-        past = candles[-1 - self.wma_slope_shift_candles]
-        current_price = self.candle_price(current)
-        past_price = self.candle_price(past)
-        if not past_price:
-            return 0.0
-
-        return ((current_price - past_price) / past_price) * 10000
-
-    def update_trend_state(self, wma: float, price: float) -> str:
-        if not wma or not price:
+    def update_trend_state(self, wma: Optional[float], price: Optional[float]) -> str:
+        if wma is None or price is None or wma == 0:
+            self.trend_state = "UNKNOWN"
             return self.trend_state
 
-        distance_bps = ((price - wma) / wma) * 10000
-        slope_bps = self.get_wma_slope_bps()
+        delta_bps = ((price - wma) / wma) * 10000
 
-        # Enter trend if price is beyond enter threshold and slope aligns
-        if distance_bps >= self.trend_enter_bps and slope_bps >= self.min_wma_slope_bps:
+        if self.trend_state == "UP":
+            if delta_bps <= -self.trend_exit_bps:
+                self.trend_state = "DOWN"
+            else:
+                self.trend_state = "UP"
+            return self.trend_state
+
+        if self.trend_state == "DOWN":
+            if delta_bps >= self.trend_exit_bps:
+                self.trend_state = "UP"
+            else:
+                self.trend_state = "DOWN"
+            return self.trend_state
+
+        if delta_bps >= self.trend_enter_bps:
             self.trend_state = "UP"
-        elif distance_bps <= -self.trend_enter_bps and slope_bps <= -self.min_wma_slope_bps:
+        elif delta_bps <= -self.trend_enter_bps:
             self.trend_state = "DOWN"
         else:
-            # Exit to FLAT only if distance is inside exit band
-            if abs(distance_bps) <= self.trend_exit_bps:
-                self.trend_state = "FLAT"
+            self.trend_state = "FLAT"
 
         return self.trend_state
 
@@ -119,8 +118,7 @@ class DirectionalTrendTester:
         print(f"  WMA Period:           {self.wma_period}")
         print(f"  Price Type:           {self.price_type}")
         print(f"  Trend Enter/Exit:     {self.trend_enter_bps:.1f} / {self.trend_exit_bps:.1f} bps")
-        print(f"  WMA Slope Shift:      {self.wma_slope_shift_candles} candles")
-        print(f"  Min WMA Slope:        {self.min_wma_slope_bps:.1f} bps/candle")
+        print(f"  WMA Threshold:        {self.wma_threshold:.2%}")
         print("=" * 80 + "\n")
 
         async with websockets.connect(
@@ -158,15 +156,15 @@ class DirectionalTrendTester:
 
                 price = self.candle_price(completed_candle)
                 wma = self.get_wma()
+                raw_trend = self.trend_from_price(wma, price)
                 trend = self.update_trend_state(wma, price)
-                slope_bps = self.get_wma_slope_bps()
 
                 if trend != self.last_trend:
                     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
                     wma_str = f"{wma:.3f}" if wma else "n/a"
                     print("\n" + "=" * 60)
-                    print(f"[{ts}] TREND CHANGE: {self.last_trend} -> {trend}")
-                    print(f"Price: ${price:.3f} | WMA: ${wma_str} | Slope: {slope_bps:+.1f} bps")
+                    print(f"[{ts}] TREND CHANGE: {self.last_trend} -> {trend} (raw {raw_trend})")
+                    print(f"Price: ${price:.3f} | WMA: ${wma_str}")
                     print("=" * 60 + "\n")
                     if self.last_trend == "UP" and trend != "UP":
                         self.up_streak = 0
@@ -180,6 +178,9 @@ class DirectionalTrendTester:
                 elif trend == "DOWN":
                     self.down_streak += 1
                     self.up_streak = 0
+                else:
+                    self.up_streak = 0
+                    self.down_streak = 0
 
                 desired_position = None
                 if self.up_streak >= 5:
@@ -190,26 +191,14 @@ class DirectionalTrendTester:
                 if desired_position is not None and desired_position != self.position:
                     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
                     if self.position == "LONG":
-                        msg = f"[{ts}] EXIT LONG | price=${price:.3f} | up_streak={self.up_streak} down_streak={self.down_streak}"
-                        if self._use_colors:
-                            msg = f"{self._c_yellow}🟡 {msg}{self._c_reset}"
-                        print(msg)
+                        print(f"[{ts}] EXIT LONG | price=${price:.3f} | up_streak={self.up_streak} down_streak={self.down_streak}")
                     elif self.position == "SHORT":
-                        msg = f"[{ts}] EXIT SHORT | price=${price:.3f} | up_streak={self.up_streak} down_streak={self.down_streak}"
-                        if self._use_colors:
-                            msg = f"{self._c_yellow}🟡 {msg}{self._c_reset}"
-                        print(msg)
+                        print(f"[{ts}] EXIT SHORT | price=${price:.3f} | up_streak={self.up_streak} down_streak={self.down_streak}")
 
                     if desired_position == "LONG":
-                        msg = f"[{ts}] ENTER LONG | price=${price:.3f} | up_streak={self.up_streak}"
-                        if self._use_colors:
-                            msg = f"{self._c_green}🟢 {msg}{self._c_reset}"
-                        print(msg)
+                        print(f"[{ts}] ENTER LONG | price=${price:.3f} | up_streak={self.up_streak}")
                     elif desired_position == "SHORT":
-                        msg = f"[{ts}] ENTER SHORT | price=${price:.3f} | down_streak={self.down_streak}"
-                        if self._use_colors:
-                            msg = f"{self._c_red}🔴 {msg}{self._c_reset}"
-                        print(msg)
+                        print(f"[{ts}] ENTER SHORT | price=${price:.3f} | down_streak={self.down_streak}")
 
                     self.position = desired_position
 
@@ -218,16 +207,8 @@ class DirectionalTrendTester:
                 wma_str = f"{wma:.3f}" if wma else "n/a"
                 line = (
                     f"[{ts}] Price: ${price:.3f} | WMA: ${wma_str} | "
-                    f"Slope: {slope_bps:+.1f} bps | Trend: {trend} | "
-                    f"streaks U:{self.up_streak} D:{self.down_streak} | pos: {self.position or 'FLAT'}"
+                    f"Trend: {trend} | streaks U:{self.up_streak} D:{self.down_streak} | pos: {self.position or 'FLAT'}"
                 )
-                if self._use_colors:
-                    if trend == "UP":
-                        line = f"{self._c_green}{line}{self._c_reset}"
-                    elif trend == "DOWN":
-                        line = f"{self._c_red}{line}{self._c_reset}"
-                    elif trend == "FLAT":
-                        line = f"{self._c_cyan}{line}{self._c_reset}"
                 print(line)
 
 

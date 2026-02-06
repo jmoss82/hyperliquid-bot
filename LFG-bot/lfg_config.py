@@ -41,8 +41,6 @@ DEFAULT_MARGIN_MODE = "isolated"  # or "cross"
 EXECUTION_CONFIG = {
     "patience_ms": 300,          # Wait between reprices (ms)
     "max_duration": 30.0,        # Max chase time (seconds)
-    "max_spread_cross": 0.005,   # Max 0.5% slippage
-    "spread_position": 0.3,      # 30% into spread (0=bid, 1=ask)
 }
 
 # Signal parameters
