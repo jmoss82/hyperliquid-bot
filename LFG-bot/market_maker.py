@@ -147,6 +147,7 @@ class MarketMaker:
         self.up_streak = 0
         self.down_streak = 0
         self.desired_position: Optional[str] = None  # "LONG", "SHORT", or None
+        self.position: Optional[str] = None  # "LONG", "SHORT", or None
 
         # Position management parameters (Streak exits)
         self.stop_loss_pct = 0.06  # Exit at -6% of position notional
