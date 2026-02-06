@@ -204,7 +204,7 @@ class MarketMaker:
         # Position management parameters (Phase 3: Smart exits)
         self.take_profit_bps = None      # Disabled for streak strategy
         self.stop_loss_pct = 0.06        # Exit at -6% of position notional
-        self.max_hold_time = 120.0       # Max seconds to hold position
+        self.max_hold_time = None        # No max hold for streak strategy
         self.position_check_interval = 0.1  # Check every 0.1 seconds
 
     def _normalize_status(self, status: Optional[XYZOrderStatus]) -> str:
@@ -711,7 +711,7 @@ class MarketMaker:
         Priority order:
         1. Stop Loss (-6% notional) → Taker exit immediately
         2. Take Profit (+20 bps) → Taker exit immediately
-        3. Max Hold Time (120s) → Taker exit immediately
+        3. Max Hold Time (disabled) → N/A
 
         Args:
             entry_side: The side we entered (BUY for long, SELL for short)
@@ -722,10 +722,11 @@ class MarketMaker:
         print(f"\n{'='*60}", flush=True)
         print(f"[POSITION] {position_type} @ ${entry_price:.2f} | Size: {size:.4f}", flush=True)
         tp_str = "disabled" if self.take_profit_bps is None else f"+{self.take_profit_bps} bps"
+        max_str = "disabled" if self.max_hold_time is None else f"{self.max_hold_time:.0f}s"
         print(
             f"[POSITION] TP: {tp_str} | "
             f"SL: -{self.stop_loss_pct:.2%} notional | "
-            f"Max: {self.max_hold_time}s",
+            f"Max: {max_str}",
             flush=True
         )
         print(f"{'='*60}\n", flush=True)
@@ -794,16 +795,8 @@ class MarketMaker:
                 return
 
             # ====================================================================================
-            # CONDITION 3: MAX HOLD TIME
+            # CONDITION 3: MAX HOLD TIME (disabled)
             # ====================================================================================
-            if elapsed >= self.max_hold_time:
-                print(f"\n[MAX TIME] Held for {elapsed:.1f}s >= {self.max_hold_time}s", flush=True)
-                print(f"[MAX TIME] P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f})", flush=True)
-                print(f"[MAX TIME] Exiting {position_type} as TAKER", flush=True)
-                await self.exit_position_fast(entry_side, entry_price, size)
-                self.active_orders.clear()
-                self.open_positions = 0
-                return
 
             # ====================================================================================
             # Still holding - log periodic updates (every 10 seconds)
@@ -1741,28 +1734,27 @@ class MarketMaker:
         print("="*80)
         print(f"Started: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
         print(f"\nParameters:")
-        print(f"  Spread threshold: {self.spread_threshold_bps:.1f} bps")
         print(f"  Position size:    ${self.position_size_usd:.2f}")
-        print(f"  Spread position:  {self.spread_position:.1%}")
         print(f"  Max positions:    {self.max_positions}")
         print(f"  Trade cooldown:   {self.min_trade_interval:.0f}s")
-        print(f"\nWMA Trend Detection (Phase 3: Smart Exits):")
+        print(f"  Entry type:       MARKET (taker)")
+        print(f"\nWMA Trend Detection (Phase 4: Streak Strategy):")
         print(f"  WMA Period:       {self.wma_period}")
         print(f"  Price Type:       {self.wma_price_type}")
         print(f"  Trend Threshold:  {self.wma_threshold:.2%}")
         print(f"  Trend Enter/Exit: {self.trend_enter_bps:.1f}/{self.trend_exit_bps:.1f} bps")
-        print(f"  Min Streak:       {self.min_trend_streak} candles")
-        print(f"  Min WMA Dist:     {self.min_wma_distance_bps:.1f} bps")
-        print(f"  Min WMA Slope:    {self.min_wma_slope_bps:.1f} bps/candle")
+        print(f"  Required Streak:  {self.required_streak} candles")
         print(f"  WMA Slope Shift:  {self.wma_slope_shift_candles} candles")
-        print(f"  Structure Buffer: {self.structure_break_buffer_bps:.1f} bps")
         print(f"\nPosition Management:")
         if self.take_profit_bps is None:
             print(f"  Take Profit:      disabled")
         else:
             print(f"  Take Profit:      +{self.take_profit_bps:.0f} bps")
         print(f"  Stop Loss:        -{self.stop_loss_pct:.2%} notional (immediate)")
-        print(f"  Max Hold Time:    {self.max_hold_time:.0f}s")
+        if self.max_hold_time is None:
+            print(f"  Max Hold Time:    disabled")
+        else:
+            print(f"  Max Hold Time:    {self.max_hold_time:.0f}s")
         print(f"\nSafety Limits:")
         print(f"  Max trades:       {self.max_trades}")
         print(f"  Max loss:         ${self.max_loss:.2f}")
