@@ -5,6 +5,7 @@ Directional trend bot for HyperLiquid HIP-3 pairs using a WMA trend streak.
 This README reflects the current live strategy:
 - WMA trend state (UP/DOWN/FLAT) from completed 5s candles
 - Trend gating uses WMA distance + slope
+- Higher-timeframe bias gate using WMA-50 (distance + slope + confirmation)
 - 5-in-a-row streaks to trigger entries/exits
 - Market-style entries and exits (taker limit)
 
@@ -29,13 +30,15 @@ python directional_trend_tester.py
 1. Build 5-second OHLC candles from live bid/ask
 2. Calculate 60-period WMA using weighted close (H+L+C+C)/4
 3. Determine trend state using WMA distance + slope (UP/DOWN/FLAT)
-4. Count consecutive UP/DOWN streaks
-5. Enter after 5 consecutive UP (LONG) or DOWN (SHORT)
-6. Market-style entries and exits (taker limit)
-7. Exit on opposite 5-in-a-row or stop loss
+4. Compute higher-timeframe bias using WMA-50 + slope + confirmation
+5. Count consecutive UP/DOWN streaks
+6. Enter after 5 consecutive UP (LONG) or DOWN (SHORT), gated by bias
+7. Market-style entries and exits (taker limit)
+8. Exit on opposite 5-in-a-row or stop loss
 
 Notes:
 - We only exit on an opposite 5-in-a-row or stop loss.
+- Bias gate: only LONG when bias is UP, only SHORT when bias is DOWN.
 - HIP-3 XYZ orders are limit-only; "market" is implemented as a taker limit priced through the spread.
 
 ---
@@ -65,6 +68,13 @@ mm = MarketMaker(
     trend_exit_bps=8.0,
     wma_slope_shift_candles=3,
     min_wma_slope_bps=0.8,
+    bias_wma_period=50,
+    bias_price_type="weighted_close",
+    bias_enter_bps=4.0,
+    bias_exit_bps=8.0,
+    bias_slope_shift_candles=3,
+    bias_min_slope_bps=0.6,
+    bias_confirm_candles=2,
 )
 ```
 

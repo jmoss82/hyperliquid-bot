@@ -71,6 +71,13 @@ class MarketMaker:
         trend_exit_bps: float = 8.0,
         wma_slope_shift_candles: int = 3,
         min_wma_slope_bps: float = 0.8,
+        bias_wma_period: int = 50,
+        bias_price_type: str = "weighted_close",
+        bias_enter_bps: float = 4.0,
+        bias_exit_bps: float = 8.0,
+        bias_slope_shift_candles: int = 3,
+        bias_min_slope_bps: float = 0.6,
+        bias_confirm_candles: int = 2,
     ):
         self.client = client
         self.coin = coin
@@ -135,12 +142,28 @@ class MarketMaker:
         self.wma_slope_shift_candles = wma_slope_shift_candles
         self.min_wma_slope_bps = min_wma_slope_bps
 
+        # Bias trend detection (higher-timeframe gate)
+        self.bias_wma_period = bias_wma_period
+        self.bias_price_type = bias_price_type
+        self.bias_enter_bps = bias_enter_bps
+        self.bias_exit_bps = bias_exit_bps
+        self.bias_slope_shift_candles = bias_slope_shift_candles
+        self.bias_min_slope_bps = bias_min_slope_bps
+        self.bias_confirm_candles = max(1, bias_confirm_candles)
+
         # Trend state tracking
         self.last_trend = "UNKNOWN"
         self.trend_state = "UNKNOWN"
         self.last_eval_price: Optional[float] = None
         self.last_wma: Optional[float] = None
         self.last_raw_trend: str = "UNKNOWN"
+
+        # Bias state tracking (higher-timeframe)
+        self.bias_state = "UNKNOWN"
+        self.bias_last_raw = "UNKNOWN"
+        self.bias_confirm_up = 0
+        self.bias_confirm_down = 0
+        self.last_bias = "UNKNOWN"
 
         # Streak tracking
         self.required_streak = 5  # 5-in-a-row to trigger entry
@@ -636,23 +659,30 @@ class MarketMaker:
 
     def candle_price(self, candle: "Candle") -> float:
         """Price representation for a completed candle based on configured mode."""
-        if self.wma_price_type == "weighted_close":
+        return self.candle_price_for(candle, self.wma_price_type)
+
+    def candle_price_for(self, candle: "Candle", price_type: str) -> float:
+        """Price representation for a completed candle by price_type."""
+        if price_type == "weighted_close":
             return candle.weighted_close()
-        if self.wma_price_type == "mid_price":
+        if price_type == "mid_price":
             return candle.mid_price()
         return candle.close
 
-    def get_wma_slope_bps(self) -> float:
+    def get_price_slope_bps(self, price_type: str, shift_candles: int) -> float:
         candles = self.candle_builder.candles
-        if len(candles) <= self.wma_slope_shift_candles:
+        if len(candles) <= shift_candles:
             return 0.0
         current = candles[-1]
-        past = candles[-1 - self.wma_slope_shift_candles]
-        current_price = self.candle_price(current)
-        past_price = self.candle_price(past)
+        past = candles[-1 - shift_candles]
+        current_price = self.candle_price_for(current, price_type)
+        past_price = self.candle_price_for(past, price_type)
         if not past_price:
             return 0.0
         return ((current_price - past_price) / past_price) * 10000
+
+    def get_wma_slope_bps(self) -> float:
+        return self.get_price_slope_bps(self.wma_price_type, self.wma_slope_shift_candles)
 
     def trend_from_price(self, wma: Optional[float], price: Optional[float], slope_bps: float) -> str:
         """Classify raw trend (no hysteresis) using distance + slope."""
@@ -662,6 +692,17 @@ class MarketMaker:
         if distance_bps >= self.trend_enter_bps and slope_bps >= self.min_wma_slope_bps:
             return "UP"
         if distance_bps <= -self.trend_enter_bps and slope_bps <= -self.min_wma_slope_bps:
+            return "DOWN"
+        return "FLAT"
+
+    def bias_trend_from_price(self, wma: Optional[float], price: Optional[float], slope_bps: float) -> str:
+        """Classify raw bias (no hysteresis) using distance + slope."""
+        if wma is None or price is None:
+            return "UNKNOWN"
+        distance_bps = ((price - wma) / wma) * 10000
+        if distance_bps >= self.bias_enter_bps and slope_bps >= self.bias_min_slope_bps:
+            return "UP"
+        if distance_bps <= -self.bias_enter_bps and slope_bps <= -self.bias_min_slope_bps:
             return "DOWN"
         return "FLAT"
 
@@ -683,6 +724,35 @@ class MarketMaker:
 
         return self.trend_state
 
+    def update_bias_state(self, wma: Optional[float], price: Optional[float], slope_bps: float) -> str:
+        """Bias state machine based on distance to WMA + slope filter."""
+        if not wma or not price:
+            return self.bias_state
+
+        distance_bps = ((price - wma) / wma) * 10000
+        raw = self.bias_trend_from_price(wma, price, slope_bps)
+
+        if raw == "UP":
+            self.bias_confirm_up += 1
+            self.bias_confirm_down = 0
+        elif raw == "DOWN":
+            self.bias_confirm_down += 1
+            self.bias_confirm_up = 0
+        else:
+            self.bias_confirm_up = 0
+            self.bias_confirm_down = 0
+
+        if raw == "UP" and self.bias_confirm_up >= self.bias_confirm_candles:
+            self.bias_state = "UP"
+        elif raw == "DOWN" and self.bias_confirm_down >= self.bias_confirm_candles:
+            self.bias_state = "DOWN"
+        else:
+            if abs(distance_bps) <= self.bias_exit_bps:
+                self.bias_state = "FLAT"
+
+        self.bias_last_raw = raw
+        return self.bias_state
+
     async def monitor_orderbook(self):
         """Monitor orderbook and execute trend streak strategy"""
         print("="*80)
@@ -700,6 +770,12 @@ class MarketMaker:
         print(f"  Trend Threshold:  {self.wma_threshold:.2%}")
         print(f"  Trend Enter/Exit: {self.trend_enter_bps:.1f}/{self.trend_exit_bps:.1f} bps")
         print(f"  Required Streak:  {self.required_streak} candles")
+        print(f"\nBias Trend Gate (Higher-Timeframe):")
+        print(f"  Bias WMA Period:  {self.bias_wma_period}")
+        print(f"  Price Type:       {self.bias_price_type}")
+        print(f"  Bias Enter/Exit:  {self.bias_enter_bps:.1f}/{self.bias_exit_bps:.1f} bps")
+        print(f"  Min Slope:        {self.bias_min_slope_bps:.1f} bps")
+        print(f"  Confirm Candles:  {self.bias_confirm_candles}")
         print(f"\nPosition Management:")
         print(f"  Exit Trigger:     Opposite {self.required_streak}-streak OR stop loss")
         print(f"  Stop Loss:        -{self.stop_loss_pct:.2%} notional (immediate)")
@@ -758,9 +834,17 @@ class MarketMaker:
                                     slope_bps = self.get_wma_slope_bps()
                                     raw_trend = self.trend_from_price(wma, eval_price, slope_bps)
                                     trend = self.update_trend_state(wma, eval_price)
+                                    bias_eval_price = self.candle_price_for(completed_candle, self.bias_price_type)
+                                    bias_wma = self.candle_builder.calculate_wma(self.bias_wma_period, self.bias_price_type)
+                                    bias_slope_bps = self.get_price_slope_bps(self.bias_price_type, self.bias_slope_shift_candles)
+                                    bias_raw = self.bias_trend_from_price(bias_wma, bias_eval_price, bias_slope_bps)
+                                    bias = self.update_bias_state(bias_wma, bias_eval_price, bias_slope_bps)
                                     distance_bps = None
                                     if wma and eval_price:
                                         distance_bps = ((eval_price - wma) / wma) * 10000
+                                    bias_distance_bps = None
+                                    if bias_wma and bias_eval_price:
+                                        bias_distance_bps = ((bias_eval_price - bias_wma) / bias_wma) * 10000
 
                                     self.last_eval_price = eval_price
                                     self.last_wma = wma
@@ -778,6 +862,19 @@ class MarketMaker:
                                             self.down_streak = 0
                                         self.last_trend = trend
 
+                                    if bias != self.last_bias:
+                                        print(f"\n{'='*60}", flush=True)
+                                        print(f"[BIAS CHANGE] {self.last_bias} -> {bias} (raw {bias_raw})", flush=True)
+                                        if bias_wma and bias_eval_price:
+                                            print(
+                                                f"Price: ${bias_eval_price:.3f} | Bias WMA: ${bias_wma:.3f} | "
+                                                f"Slope: {bias_slope_bps:+.1f} bps",
+                                                flush=True
+                                            )
+                                        print(f"Candles: {len(self.candle_builder.candles)}", flush=True)
+                                        print(f"{'='*60}\n", flush=True)
+                                        self.last_bias = bias
+
                                     if trend == "UP":
                                         self.up_streak += 1
                                         self.down_streak = 0
@@ -791,6 +888,22 @@ class MarketMaker:
                                     elif self.down_streak >= self.required_streak:
                                         desired_position = "SHORT"
 
+                                    if desired_position is not None:
+                                        if desired_position == "LONG" and bias != "UP":
+                                            print(
+                                                f"[BIAS BLOCK] wanted LONG, bias={bias} | "
+                                                f"up={self.up_streak} down={self.down_streak}",
+                                                flush=True
+                                            )
+                                            desired_position = None
+                                        elif desired_position == "SHORT" and bias != "DOWN":
+                                            print(
+                                                f"[BIAS BLOCK] wanted SHORT, bias={bias} | "
+                                                f"up={self.up_streak} down={self.down_streak}",
+                                                flush=True
+                                            )
+                                            desired_position = None
+
                                     if desired_position is not None and desired_position != self.position:
                                         self.desired_position = desired_position
                                         self.position = desired_position
@@ -802,10 +915,14 @@ class MarketMaker:
                                     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
                                     wma_str = f"{wma:.3f}" if wma else "n/a"
                                     dist_str = f"{distance_bps:+.1f}" if distance_bps is not None else "n/a"
+                                    bias_str = f"{bias_wma:.3f}" if bias_wma else "n/a"
+                                    bias_dist_str = f"{bias_distance_bps:+.1f}" if bias_distance_bps is not None else "n/a"
                                     line = (
                                         f"[{ts}] Price: ${eval_price:.3f} | WMA: ${wma_str} | "
                                         f"Dist: {dist_str} bps | Slope: {slope_bps:+.1f} bps | "
-                                        f"Trend: {trend} | streaks U:{self.up_streak} D:{self.down_streak} | "
+                                        f"Trend: {trend} | "
+                                        f"Bias: {bias} (WMA:{bias_str} Dist:{bias_dist_str} Slope:{bias_slope_bps:+.1f}) | "
+                                        f"streaks U:{self.up_streak} D:{self.down_streak} | "
                                         f"pos: {self.position or 'FLAT'}"
                                     )
                                     print(line, flush=True)
@@ -914,6 +1031,13 @@ async def main():
             max_candles=400,                # Keep last 400 candles
             trend_enter_bps=4.0,            # Enter trend at +/-4 bps from WMA
             trend_exit_bps=8.0,             # Exit trend at +/-8 bps from WMA
+            bias_wma_period=50,             # Higher-timeframe bias WMA
+            bias_price_type="weighted_close",
+            bias_enter_bps=4.0,
+            bias_exit_bps=8.0,
+            bias_slope_shift_candles=3,
+            bias_min_slope_bps=0.6,
+            bias_confirm_candles=2,
         )
 
         print("Starting market maker...", flush=True)
