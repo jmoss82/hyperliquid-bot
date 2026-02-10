@@ -38,7 +38,7 @@ python directional_trend_tester.py
 
 Notes:
 - **Exit priority**: Stop loss → Trailing TP → Opposite 5-in-a-row → Bias-flip.
-- Bias gate: only LONG when bias is UP, only SHORT when bias is DOWN.
+- Bias gate: blocks LONG when bias is DOWN, blocks SHORT when bias is UP. FLAT/UNKNOWN allows both directions (bias-flip exit provides safety net).
 - Bias is **sticky**: once locked in a direction, only 8 consecutive opposite-direction readings can flip it. FLAT readings are ignored (pause counters, don't reset them). This prevents minor pullbacks from destroying the macro read.
 - HIP-3 XYZ orders are limit-only; "market" is implemented as a taker limit priced through the spread.
 

@@ -1055,14 +1055,16 @@ class MarketMaker:
                                         desired_position = "SHORT"
 
                                     if desired_position is not None:
-                                        if desired_position == "LONG" and bias != "UP":
+                                        # Bias gate: block only when bias OPPOSES the trade
+                                        # FLAT/UNKNOWN = allow (let 5s trend decide, bias-flip exit protects)
+                                        if desired_position == "LONG" and bias == "DOWN":
                                             print(
                                                 f"[BIAS BLOCK] wanted LONG, bias={bias} | "
                                                 f"up={self.up_streak} down={self.down_streak}",
                                                 flush=True
                                             )
                                             desired_position = None
-                                        elif desired_position == "SHORT" and bias != "DOWN":
+                                        elif desired_position == "SHORT" and bias == "UP":
                                             print(
                                                 f"[BIAS BLOCK] wanted SHORT, bias={bias} | "
                                                 f"up={self.up_streak} down={self.down_streak}",
