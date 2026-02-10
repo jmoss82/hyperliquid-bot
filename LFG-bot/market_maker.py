@@ -608,21 +608,30 @@ class MarketMaker:
 
             # ====================================================================================
             # CONDITION 3: OPPOSITE STREAK EXIT (5 in a row)
+            # Exit only — do NOT carry the signal into a new entry.
+            # Clear desired_position and reset streaks so the bot must build
+            # a fresh 5-in-a-row before entering the opposite direction.
             # ====================================================================================
             if entry_side == OrderSide.BUY and self.desired_position == "SHORT":
-                print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting LONG", flush=True)
+                print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting LONG (no auto-flip)", flush=True)
                 await self.exit_position_fast(entry_side, entry_price, size)
                 self.open_positions = 0
                 self.entry_in_flight = False
                 self.position = None
+                self.desired_position = None
+                self.up_streak = 0
+                self.down_streak = 0
                 return
 
             if entry_side == OrderSide.SELL and self.desired_position == "LONG":
-                print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting SHORT", flush=True)
+                print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting SHORT (no auto-flip)", flush=True)
                 await self.exit_position_fast(entry_side, entry_price, size)
                 self.open_positions = 0
                 self.entry_in_flight = False
                 self.position = None
+                self.desired_position = None
+                self.up_streak = 0
+                self.down_streak = 0
                 return
 
             # ====================================================================================
