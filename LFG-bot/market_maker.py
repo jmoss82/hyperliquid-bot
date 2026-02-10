@@ -8,7 +8,7 @@ Strategy (Trend Streak with Market Orders):
 4. Count consecutive trend streaks
 5. Enter after 5 consecutive UP (LONG) or DOWN (SHORT) trends
 6. Market entries and exits (taker orders)
-7. Exit on opposite 5-in-a-row streak or stop loss
+7. Exit on: stop loss, trailing take-profit, opposite 5-in-a-row streak, or bias-flip
 
 Key parameters:
 - position_size_usd: Size per trade (default: $11)
@@ -71,13 +71,20 @@ class MarketMaker:
         trend_exit_bps: float = 8.0,
         wma_slope_shift_candles: int = 3,
         min_wma_slope_bps: float = 0.8,
-        bias_wma_period: int = 50,
+        bias_candle_interval_seconds: int = 60,
+        bias_max_candles: int = 1200,
+        bias_wma_period: int = 150,
         bias_price_type: str = "weighted_close",
         bias_enter_bps: float = 4.0,
-        bias_exit_bps: float = 8.0,
-        bias_slope_shift_candles: int = 3,
-        bias_min_slope_bps: float = 0.6,
-        bias_confirm_candles: int = 2,
+        bias_exit_bps: float = 12.0,
+        bias_slope_shift_candles: int = 18,
+        bias_min_slope_bps: float = 0.4,
+        bias_confirm_candles: int = 8,
+        # Trailing take-profit
+        trailing_tp_activation_bps: float = 20.0,
+        trailing_tp_trail_bps: float = 25.0,
+        # Bias-flip exit
+        exit_on_bias_flip: bool = True,
     ):
         self.client = client
         self.coin = coin
@@ -143,6 +150,11 @@ class MarketMaker:
         self.min_wma_slope_bps = min_wma_slope_bps
 
         # Bias trend detection (higher-timeframe gate)
+        self.bias_candle_builder = CandleBuilder(
+            candle_interval_seconds=bias_candle_interval_seconds,
+            max_candles=bias_max_candles
+        )
+        self.bias_candle_interval_seconds = bias_candle_interval_seconds
         self.bias_wma_period = bias_wma_period
         self.bias_price_type = bias_price_type
         self.bias_enter_bps = bias_enter_bps
@@ -164,6 +176,10 @@ class MarketMaker:
         self.bias_confirm_up = 0
         self.bias_confirm_down = 0
         self.last_bias = "UNKNOWN"
+        self.last_bias_wma: Optional[float] = None
+        self.last_bias_eval_price: Optional[float] = None
+        self.last_bias_slope_bps: Optional[float] = None
+        self.last_bias_distance_bps: Optional[float] = None
 
         # Streak tracking
         self.required_streak = 5  # 5-in-a-row to trigger entry
@@ -175,6 +191,13 @@ class MarketMaker:
         # Position management parameters (Streak exits)
         self.stop_loss_pct = 0.06  # Exit at -6% of position notional
         self.position_check_interval = 0.1  # Check every 0.1 seconds
+
+        # Trailing take-profit
+        self.trailing_tp_activation_bps = trailing_tp_activation_bps
+        self.trailing_tp_trail_bps = trailing_tp_trail_bps
+
+        # Bias-flip exit
+        self.exit_on_bias_flip = exit_on_bias_flip
 
     def _normalize_status(self, status: Optional[XYZOrderStatus]) -> str:
         """Normalize order status to internal uppercase strings."""
@@ -443,7 +466,6 @@ class MarketMaker:
         self.desired_position = None
         self.up_streak = 0
         self.down_streak = 0
-        self.position = None  # "LONG", "SHORT", or None
         
         # Check if already filled during placement
         if hasattr(order, 'status') and order.status and 'filled' in str(order.status).lower():
@@ -464,10 +486,11 @@ class MarketMaker:
         """
         Monitor an open position for exit conditions.
 
-        Streak exit logic - ALL TAKER EXITS.
-        Priority order:
+        ALL TAKER EXITS - priority order:
         1. Stop Loss (-6% notional) -> Taker exit immediately
-        2. Opposite 5-in-a-row streak -> Taker exit immediately
+        2. Trailing Take-Profit (activate at +N bps, trail M bps from high) -> Taker exit
+        3. Opposite 5-in-a-row streak -> Taker exit immediately
+        4. Bias-flip exit (bias reverses against position) -> Taker exit immediately
 
         Args:
             entry_side: The side we entered (BUY for long, SELL for short)
@@ -478,13 +501,20 @@ class MarketMaker:
         print(f"\n{'='*60}", flush=True)
         print(f"[POSITION] {position_type} @ ${entry_price:.2f} | Size: {size:.4f}", flush=True)
         print(
-            f"[POSITION] Exit: Opposite 5-streak or "
-            f"SL -{self.stop_loss_pct:.2%} notional",
+            f"[POSITION] Exit: Opposite 5-streak | "
+            f"SL -{self.stop_loss_pct:.2%} notional | "
+            f"Trail TP {self.trailing_tp_trail_bps:.0f}bps (activate +{self.trailing_tp_activation_bps:.0f}bps)"
+            f"{' | Bias-flip' if self.exit_on_bias_flip else ''}",
             flush=True
         )
         print(f"{'='*60}\n", flush=True)
 
         entry_time = time.time()
+
+        # Trailing take-profit state
+        trail_active = False
+        trail_high_water_bps = 0.0  # Best mid-based P&L seen (bps)
+        trail_stop_bps = 0.0        # Current trailing stop level (bps)
 
         while True:
             await asyncio.sleep(self.position_check_interval)
@@ -504,11 +534,15 @@ class MarketMaker:
                 exit_price = bid * 0.9995  # Actual exit price (bid minus buffer)
                 pnl_dollars = (exit_price - entry_price) * size
                 pnl_bps = ((exit_price - entry_price) / entry_price) * 10000
+                # Mid-based P&L for trail tracking (more responsive)
+                mid_pnl_bps = ((mid - entry_price) / entry_price) * 10000
             else:
                 # Short: exit by buying at ASK
                 exit_price = ask * 1.0005  # Actual exit price (ask plus buffer)
                 pnl_dollars = (entry_price - exit_price) * size
                 pnl_bps = ((entry_price - exit_price) / entry_price) * 10000
+                # Mid-based P&L for trail tracking (more responsive)
+                mid_pnl_bps = ((entry_price - mid) / entry_price) * 10000
 
             # Get current trend (sticky state from completed candles)
             current_trend = self.trend_state
@@ -532,7 +566,48 @@ class MarketMaker:
                 return
 
             # ====================================================================================
-            # CONDITION 2: OPPOSITE STREAK EXIT (5 in a row)
+            # CONDITION 2: TRAILING TAKE-PROFIT
+            # Track high-water mark on mid; trigger exit on bid/ask P&L
+            # ====================================================================================
+            if mid_pnl_bps >= self.trailing_tp_activation_bps:
+                if not trail_active:
+                    trail_active = True
+                    trail_high_water_bps = mid_pnl_bps
+                    trail_stop_bps = mid_pnl_bps - self.trailing_tp_trail_bps
+                    print(
+                        f"\n[TRAIL TP] Activated! Mid P&L: {mid_pnl_bps:.1f} bps | "
+                        f"High: {trail_high_water_bps:.1f} bps | "
+                        f"Trail stop: {trail_stop_bps:.1f} bps",
+                        flush=True
+                    )
+                elif mid_pnl_bps > trail_high_water_bps:
+                    old_stop = trail_stop_bps
+                    trail_high_water_bps = mid_pnl_bps
+                    trail_stop_bps = mid_pnl_bps - self.trailing_tp_trail_bps
+                    if trail_stop_bps - old_stop >= 5.0:  # Log when stop moves 5+ bps
+                        print(
+                            f"[TRAIL TP] New high: {trail_high_water_bps:.1f} bps | "
+                            f"Trail stop: {trail_stop_bps:.1f} bps",
+                            flush=True
+                        )
+
+            # Check if trailing stop has been hit (use actual exit P&L, not mid)
+            if trail_active and pnl_bps <= trail_stop_bps:
+                print(
+                    f"\n[TRAIL TP] Exit triggered! P&L: {pnl_bps:.1f} bps | "
+                    f"Trail stop: {trail_stop_bps:.1f} bps | "
+                    f"High was: {trail_high_water_bps:.1f} bps",
+                    flush=True
+                )
+                print(f"[TRAIL TP] Exiting {position_type} as TAKER", flush=True)
+                await self.exit_position_fast(entry_side, entry_price, size)
+                self.open_positions = 0
+                self.entry_in_flight = False
+                self.position = None
+                return
+
+            # ====================================================================================
+            # CONDITION 3: OPPOSITE STREAK EXIT (5 in a row)
             # ====================================================================================
             if entry_side == OrderSide.BUY and self.desired_position == "SHORT":
                 print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting LONG", flush=True)
@@ -551,13 +626,53 @@ class MarketMaker:
                 return
 
             # ====================================================================================
+            # CONDITION 4: BIAS-FLIP EXIT
+            # If bias reverses against position direction, exit immediately
+            # ====================================================================================
+            if self.exit_on_bias_flip:
+                current_bias = self.bias_state
+                if entry_side == OrderSide.BUY and current_bias == "DOWN":
+                    print(
+                        f"\n[BIAS EXIT] Bias flipped to DOWN while LONG | "
+                        f"P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f})",
+                        flush=True
+                    )
+                    print(f"[BIAS EXIT] Exiting {position_type} as TAKER", flush=True)
+                    await self.exit_position_fast(entry_side, entry_price, size)
+                    self.open_positions = 0
+                    self.entry_in_flight = False
+                    self.position = None
+                    return
+
+                if entry_side == OrderSide.SELL and current_bias == "UP":
+                    print(
+                        f"\n[BIAS EXIT] Bias flipped to UP while SHORT | "
+                        f"P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f})",
+                        flush=True
+                    )
+                    print(f"[BIAS EXIT] Exiting {position_type} as TAKER", flush=True)
+                    await self.exit_position_fast(entry_side, entry_price, size)
+                    self.open_positions = 0
+                    self.entry_in_flight = False
+                    self.position = None
+                    return
+
+            # ====================================================================================
             # Still holding - log periodic updates (every 10 seconds)
             # ====================================================================================
             elapsed_int = int(elapsed)
             if not hasattr(self, '_last_hold_log') or self._last_hold_log != elapsed_int:
                 if elapsed_int > 0 and elapsed_int % 10 == 0:
                     self._last_hold_log = elapsed_int
-                    print(f"[HOLDING] {position_type} | {elapsed:.0f}s | P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) | Trend: {current_trend}", flush=True)
+                    trail_info = ""
+                    if trail_active:
+                        trail_info = f" | Trail: stop={trail_stop_bps:.1f} high={trail_high_water_bps:.1f}"
+                    print(
+                        f"[HOLDING] {position_type} | {elapsed:.0f}s | "
+                        f"P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f}) | "
+                        f"Trend: {current_trend} | Bias: {self.bias_state}{trail_info}",
+                        flush=True
+                    )
 
     async def exit_position_fast(
         self,
@@ -669,8 +784,14 @@ class MarketMaker:
             return candle.mid_price()
         return candle.close
 
-    def get_price_slope_bps(self, price_type: str, shift_candles: int) -> float:
-        candles = self.candle_builder.candles
+    def get_price_slope_bps(
+        self,
+        price_type: str,
+        shift_candles: int,
+        candle_builder: Optional[CandleBuilder] = None
+    ) -> float:
+        builder = candle_builder or self.candle_builder
+        candles = builder.candles
         if len(candles) <= shift_candles:
             return 0.0
         current = candles[-1]
@@ -725,30 +846,48 @@ class MarketMaker:
         return self.trend_state
 
     def update_bias_state(self, wma: Optional[float], price: Optional[float], slope_bps: float) -> str:
-        """Bias state machine based on distance to WMA + slope filter."""
+        """Sticky bias state machine.
+
+        Key design:
+        - FLAT readings PAUSE counters but don't reset them.
+          Only the OPPOSITE direction resets a counter.
+        - Once in UP/DOWN, only a confirmed opposite signal
+          (bias_confirm_candles consecutive readings) can flip it.
+        - From UNKNOWN/FLAT, need confirmed signal to enter a direction.
+        """
         if not wma or not price:
             return self.bias_state
 
-        distance_bps = ((price - wma) / wma) * 10000
         raw = self.bias_trend_from_price(wma, price, slope_bps)
 
+        # --- Update counters ---
+        # CRITICAL: Only the OPPOSITE direction resets a counter.
+        # FLAT readings leave both counters unchanged (sticky).
         if raw == "UP":
             self.bias_confirm_up += 1
-            self.bias_confirm_down = 0
+            self.bias_confirm_down = 0      # opposite resets
         elif raw == "DOWN":
             self.bias_confirm_down += 1
-            self.bias_confirm_up = 0
-        else:
-            self.bias_confirm_up = 0
-            self.bias_confirm_down = 0
+            self.bias_confirm_up = 0        # opposite resets
+        # raw == "FLAT": both counters unchanged
 
-        if raw == "UP" and self.bias_confirm_up >= self.bias_confirm_candles:
-            self.bias_state = "UP"
-        elif raw == "DOWN" and self.bias_confirm_down >= self.bias_confirm_candles:
-            self.bias_state = "DOWN"
-        else:
-            if abs(distance_bps) <= self.bias_exit_bps:
-                self.bias_state = "FLAT"
+        # --- State transitions ---
+        if self.bias_state in ("UNKNOWN", "FLAT"):
+            # Need confirmed directional signal to leave neutral
+            if self.bias_confirm_up >= self.bias_confirm_candles:
+                self.bias_state = "UP"
+            elif self.bias_confirm_down >= self.bias_confirm_candles:
+                self.bias_state = "DOWN"
+
+        elif self.bias_state == "UP":
+            # Only flip on confirmed opposite signal
+            if self.bias_confirm_down >= self.bias_confirm_candles:
+                self.bias_state = "DOWN"
+
+        elif self.bias_state == "DOWN":
+            # Only flip on confirmed opposite signal
+            if self.bias_confirm_up >= self.bias_confirm_candles:
+                self.bias_state = "UP"
 
         self.bias_last_raw = raw
         return self.bias_state
@@ -771,14 +910,18 @@ class MarketMaker:
         print(f"  Trend Enter/Exit: {self.trend_enter_bps:.1f}/{self.trend_exit_bps:.1f} bps")
         print(f"  Required Streak:  {self.required_streak} candles")
         print(f"\nBias Trend Gate (Higher-Timeframe):")
+        print(f"  Bias Candle Size: {self.bias_candle_interval_seconds}s")
         print(f"  Bias WMA Period:  {self.bias_wma_period}")
         print(f"  Price Type:       {self.bias_price_type}")
         print(f"  Bias Enter/Exit:  {self.bias_enter_bps:.1f}/{self.bias_exit_bps:.1f} bps")
         print(f"  Min Slope:        {self.bias_min_slope_bps:.1f} bps")
         print(f"  Confirm Candles:  {self.bias_confirm_candles}")
         print(f"\nPosition Management:")
-        print(f"  Exit Trigger:     Opposite {self.required_streak}-streak OR stop loss")
+        print(f"  Exit Trigger:     Opposite {self.required_streak}-streak OR stop loss OR trailing TP{' OR bias-flip' if self.exit_on_bias_flip else ''}")
         print(f"  Stop Loss:        -{self.stop_loss_pct:.2%} notional (immediate)")
+        print(f"  Trailing TP:      {self.trailing_tp_trail_bps:.0f} bps trail, activate after +{self.trailing_tp_activation_bps:.0f} bps")
+        print(f"  Trail Tracking:   Mid-price (trigger on bid/ask)")
+        print(f"  Bias-Flip Exit:   {'ON' if self.exit_on_bias_flip else 'OFF'}")
         print(f"\nSafety Limits:")
         print(f"  Max trades:       {self.max_trades}")
         print(f"  Max loss:         ${self.max_loss:.2f}")
@@ -827,6 +970,7 @@ class MarketMaker:
                                 # STREAK LOGIC: Use completed candles only
                                 # ========================================
                                 completed_candle = self.candle_builder.update(bid, ask)
+                                completed_bias_candle = self.bias_candle_builder.update(bid, ask)
 
                                 if completed_candle:
                                     eval_price = self.candle_price(completed_candle)
@@ -834,17 +978,33 @@ class MarketMaker:
                                     slope_bps = self.get_wma_slope_bps()
                                     raw_trend = self.trend_from_price(wma, eval_price, slope_bps)
                                     trend = self.update_trend_state(wma, eval_price)
-                                    bias_eval_price = self.candle_price_for(completed_candle, self.bias_price_type)
-                                    bias_wma = self.candle_builder.calculate_wma(self.bias_wma_period, self.bias_price_type)
-                                    bias_slope_bps = self.get_price_slope_bps(self.bias_price_type, self.bias_slope_shift_candles)
-                                    bias_raw = self.bias_trend_from_price(bias_wma, bias_eval_price, bias_slope_bps)
-                                    bias = self.update_bias_state(bias_wma, bias_eval_price, bias_slope_bps)
                                     distance_bps = None
                                     if wma and eval_price:
                                         distance_bps = ((eval_price - wma) / wma) * 10000
-                                    bias_distance_bps = None
-                                    if bias_wma and bias_eval_price:
-                                        bias_distance_bps = ((bias_eval_price - bias_wma) / bias_wma) * 10000
+                                    if completed_bias_candle:
+                                        bias_eval_price = self.candle_price_for(completed_bias_candle, self.bias_price_type)
+                                        bias_wma = self.bias_candle_builder.calculate_wma(
+                                            self.bias_wma_period,
+                                            self.bias_price_type
+                                        )
+                                        bias_slope_bps = self.get_price_slope_bps(
+                                            self.bias_price_type,
+                                            self.bias_slope_shift_candles,
+                                            candle_builder=self.bias_candle_builder
+                                        )
+                                        bias_raw = self.bias_trend_from_price(bias_wma, bias_eval_price, bias_slope_bps)
+                                        bias = self.update_bias_state(bias_wma, bias_eval_price, bias_slope_bps)
+                                        bias_distance_bps = None
+                                        if bias_wma and bias_eval_price:
+                                            bias_distance_bps = ((bias_eval_price - bias_wma) / bias_wma) * 10000
+                                        self.last_bias_wma = bias_wma
+                                        self.last_bias_eval_price = bias_eval_price
+                                        self.last_bias_slope_bps = bias_slope_bps
+                                        self.last_bias_distance_bps = bias_distance_bps
+                                    else:
+                                        bias_raw = self.bias_last_raw
+                                        bias = self.bias_state
+                                        bias_distance_bps = self.last_bias_distance_bps
 
                                     self.last_eval_price = eval_price
                                     self.last_wma = wma
@@ -865,13 +1025,19 @@ class MarketMaker:
                                     if bias != self.last_bias:
                                         print(f"\n{'='*60}", flush=True)
                                         print(f"[BIAS CHANGE] {self.last_bias} -> {bias} (raw {bias_raw})", flush=True)
-                                        if bias_wma and bias_eval_price:
+                                        if self.last_bias_wma and self.last_bias_eval_price:
+                                            slope_str = (
+                                                f"{self.last_bias_slope_bps:+.1f}"
+                                                if self.last_bias_slope_bps is not None
+                                                else "n/a"
+                                            )
                                             print(
-                                                f"Price: ${bias_eval_price:.3f} | Bias WMA: ${bias_wma:.3f} | "
-                                                f"Slope: {bias_slope_bps:+.1f} bps",
+                                                f"Price: ${self.last_bias_eval_price:.3f} | "
+                                                f"Bias WMA: ${self.last_bias_wma:.3f} | "
+                                                f"Slope: {slope_str} bps",
                                                 flush=True
                                             )
-                                        print(f"Candles: {len(self.candle_builder.candles)}", flush=True)
+                                        print(f"Candles: {len(self.bias_candle_builder.candles)}", flush=True)
                                         print(f"{'='*60}\n", flush=True)
                                         self.last_bias = bias
 
@@ -915,13 +1081,19 @@ class MarketMaker:
                                     ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
                                     wma_str = f"{wma:.3f}" if wma else "n/a"
                                     dist_str = f"{distance_bps:+.1f}" if distance_bps is not None else "n/a"
-                                    bias_str = f"{bias_wma:.3f}" if bias_wma else "n/a"
+                                    bias_str = f"{self.last_bias_wma:.3f}" if self.last_bias_wma else "n/a"
                                     bias_dist_str = f"{bias_distance_bps:+.1f}" if bias_distance_bps is not None else "n/a"
+                                    bias_slope_str = (
+                                        f"{self.last_bias_slope_bps:+.1f}"
+                                        if self.last_bias_slope_bps is not None
+                                        else "n/a"
+                                    )
                                     line = (
                                         f"[{ts}] Price: ${eval_price:.3f} | WMA: ${wma_str} | "
                                         f"Dist: {dist_str} bps | Slope: {slope_bps:+.1f} bps | "
                                         f"Trend: {trend} | "
-                                        f"Bias: {bias} (WMA:{bias_str} Dist:{bias_dist_str} Slope:{bias_slope_bps:+.1f}) | "
+                                        f"Bias: {bias} (WMA:{bias_str} Dist:{bias_dist_str} "
+                                        f"Slope:{bias_slope_str}) | "
                                         f"streaks U:{self.up_streak} D:{self.down_streak} | "
                                         f"pos: {self.position or 'FLAT'}"
                                     )
@@ -1031,13 +1203,18 @@ async def main():
             max_candles=400,                # Keep last 400 candles
             trend_enter_bps=4.0,            # Enter trend at +/-4 bps from WMA
             trend_exit_bps=8.0,             # Exit trend at +/-8 bps from WMA
-            bias_wma_period=50,             # Higher-timeframe bias WMA
+            bias_candle_interval_seconds=60,  # 1-min bias candles
+            bias_max_candles=2000,
+            bias_wma_period=30,             # ~30 min higher-timeframe bias WMA
             bias_price_type="weighted_close",
-            bias_enter_bps=4.0,
-            bias_exit_bps=8.0,
-            bias_slope_shift_candles=3,
-            bias_min_slope_bps=0.6,
-            bias_confirm_candles=2,
+            bias_enter_bps=4.0,             # Distance from bias WMA to enter
+            bias_exit_bps=12.0,             # Wide exit so bias stays locked in
+            bias_slope_shift_candles=6,     # ~6 min slope window (1-min candles)
+            bias_min_slope_bps=0.4,         # Slightly forgiving (longer window smooths)
+            bias_confirm_candles=4,         # ~4 min confirmation before bias flips
+            trailing_tp_activation_bps=20.0,  # Trail activates after +20 bps profit (mid)
+            trailing_tp_trail_bps=25.0,       # 25 bps trail width from high-water mark
+            exit_on_bias_flip=True,           # Exit if bias reverses against position
         )
 
         print("Starting market maker...", flush=True)
