@@ -58,6 +58,7 @@ class MarketMaker:
         max_trades: int = 10,
         max_loss: float = 5.0,
         min_trade_interval: float = 0.0,
+        post_exit_cooldown_s: float = 120.0,
         dry_run: bool = True,
         max_quote_age_ms: float = 500.0,
         ws_stale_timeout_s: float = 5.0,
@@ -93,6 +94,7 @@ class MarketMaker:
         self.max_trades = max_trades
         self.max_loss = max_loss
         self.min_trade_interval = min_trade_interval
+        self.post_exit_cooldown_s = post_exit_cooldown_s
         self.dry_run = dry_run
         self.max_quote_age_ms = max_quote_age_ms
         self.ws_stale_timeout_s = ws_stale_timeout_s
@@ -119,6 +121,7 @@ class MarketMaker:
 
         # Cooldown tracking
         self.last_placement_time = 0.0
+        self.last_exit_time = 0.0
 
         # Websocket latency monitoring
         self.ws_ping_interval_s = 30.0
@@ -212,6 +215,16 @@ class MarketMaker:
         if self.last_book_update_ts <= 0:
             return None
         return (time.monotonic() - self.last_book_update_ts) * 1000
+
+    def get_live_position_size(self) -> float:
+        """Return absolute live position size from exchange (0.0 if flat/unknown)."""
+        try:
+            position = self.client.get_position(self.coin)
+            if position and abs(position.size) > 0:
+                return abs(position.size)
+        except Exception as e:
+            print(f"[POSITION] Live position check failed: {e}", flush=True)
+        return 0.0
 
     async def ensure_fresh_quote(
         self,
@@ -317,6 +330,25 @@ class MarketMaker:
 
         # Don't enter if an entry is in flight
         if self.entry_in_flight:
+            return None
+
+        # Universal cooldown after any successful exit
+        if self.last_exit_time > 0 and self.post_exit_cooldown_s > 0:
+            time_since_exit = time.time() - self.last_exit_time
+            if time_since_exit < self.post_exit_cooldown_s:
+                if not hasattr(self, "_last_exit_cooldown_log_ts") or time.time() - self._last_exit_cooldown_log_ts > 10:
+                    remaining = self.post_exit_cooldown_s - time_since_exit
+                    print(f"[EXIT COOLDOWN] {remaining:.1f}s remaining before next entry", flush=True)
+                    self._last_exit_cooldown_log_ts = time.time()
+                return None
+
+        # Exchange truth gate: if live position exists, block new entries and re-sync state.
+        live_size = self.get_live_position_size()
+        if live_size > 0:
+            self.open_positions = 1
+            if not hasattr(self, "_live_position_gate_log_ts") or time.time() - self._live_position_gate_log_ts > 10:
+                print(f"[LIVE POSITION BLOCK] Exchange shows open size={live_size:.6f} - skipping new entry", flush=True)
+                self._live_position_gate_log_ts = time.time()
             return None
 
         # Don't enter if already at position limit
@@ -559,11 +591,14 @@ class MarketMaker:
                     flush=True
                 )
                 print(f"[STOP LOSS] Exiting {position_type} as TAKER", flush=True)
-                await self.exit_position_fast(entry_side, entry_price, size)
-                self.open_positions = 0
-                self.entry_in_flight = False
-                self.position = None
-                return
+                exit_ok = await self.exit_position_fast(entry_side, entry_price, size)
+                if exit_ok:
+                    self.open_positions = 0
+                    self.entry_in_flight = False
+                    self.position = None
+                    return
+                print("[STOP LOSS] Exit not confirmed flat yet; continuing monitor/retry.", flush=True)
+                continue
 
             # ====================================================================================
             # CONDITION 2: TRAILING TAKE-PROFIT
@@ -600,11 +635,14 @@ class MarketMaker:
                     flush=True
                 )
                 print(f"[TRAIL TP] Exiting {position_type} as TAKER", flush=True)
-                await self.exit_position_fast(entry_side, entry_price, size)
-                self.open_positions = 0
-                self.entry_in_flight = False
-                self.position = None
-                return
+                exit_ok = await self.exit_position_fast(entry_side, entry_price, size)
+                if exit_ok:
+                    self.open_positions = 0
+                    self.entry_in_flight = False
+                    self.position = None
+                    return
+                print("[TRAIL TP] Exit not confirmed flat yet; continuing monitor/retry.", flush=True)
+                continue
 
             # ====================================================================================
             # CONDITION 3: OPPOSITE STREAK EXIT (5 in a row)
@@ -614,25 +652,31 @@ class MarketMaker:
             # ====================================================================================
             if entry_side == OrderSide.BUY and self.desired_position == "SHORT":
                 print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting LONG (no auto-flip)", flush=True)
-                await self.exit_position_fast(entry_side, entry_price, size)
-                self.open_positions = 0
-                self.entry_in_flight = False
-                self.position = None
-                self.desired_position = None
-                self.up_streak = 0
-                self.down_streak = 0
-                return
+                exit_ok = await self.exit_position_fast(entry_side, entry_price, size)
+                if exit_ok:
+                    self.open_positions = 0
+                    self.entry_in_flight = False
+                    self.position = None
+                    self.desired_position = None
+                    self.up_streak = 0
+                    self.down_streak = 0
+                    return
+                print("[STREAK EXIT] Exit not confirmed flat yet; continuing monitor/retry.", flush=True)
+                continue
 
             if entry_side == OrderSide.SELL and self.desired_position == "LONG":
                 print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting SHORT (no auto-flip)", flush=True)
-                await self.exit_position_fast(entry_side, entry_price, size)
-                self.open_positions = 0
-                self.entry_in_flight = False
-                self.position = None
-                self.desired_position = None
-                self.up_streak = 0
-                self.down_streak = 0
-                return
+                exit_ok = await self.exit_position_fast(entry_side, entry_price, size)
+                if exit_ok:
+                    self.open_positions = 0
+                    self.entry_in_flight = False
+                    self.position = None
+                    self.desired_position = None
+                    self.up_streak = 0
+                    self.down_streak = 0
+                    return
+                print("[STREAK EXIT] Exit not confirmed flat yet; continuing monitor/retry.", flush=True)
+                continue
 
             # ====================================================================================
             # CONDITION 4: BIAS-FLIP EXIT
@@ -647,11 +691,14 @@ class MarketMaker:
                         flush=True
                     )
                     print(f"[BIAS EXIT] Exiting {position_type} as TAKER", flush=True)
-                    await self.exit_position_fast(entry_side, entry_price, size)
-                    self.open_positions = 0
-                    self.entry_in_flight = False
-                    self.position = None
-                    return
+                    exit_ok = await self.exit_position_fast(entry_side, entry_price, size)
+                    if exit_ok:
+                        self.open_positions = 0
+                        self.entry_in_flight = False
+                        self.position = None
+                        return
+                    print("[BIAS EXIT] Exit not confirmed flat yet; continuing monitor/retry.", flush=True)
+                    continue
 
                 if entry_side == OrderSide.SELL and current_bias == "UP":
                     print(
@@ -660,11 +707,14 @@ class MarketMaker:
                         flush=True
                     )
                     print(f"[BIAS EXIT] Exiting {position_type} as TAKER", flush=True)
-                    await self.exit_position_fast(entry_side, entry_price, size)
-                    self.open_positions = 0
-                    self.entry_in_flight = False
-                    self.position = None
-                    return
+                    exit_ok = await self.exit_position_fast(entry_side, entry_price, size)
+                    if exit_ok:
+                        self.open_positions = 0
+                        self.entry_in_flight = False
+                        self.position = None
+                        return
+                    print("[BIAS EXIT] Exit not confirmed flat yet; continuing monitor/retry.", flush=True)
+                    continue
 
             # ====================================================================================
             # Still holding - log periodic updates (every 10 seconds)
@@ -743,6 +793,25 @@ class MarketMaker:
             )
             
             if exit_order:
+                # Confirm position is actually flat before clearing internal state.
+                flat_confirmed = False
+                confirm_deadline = time.time() + 3.0
+                while time.time() < confirm_deadline:
+                    live_size = self.get_live_position_size()
+                    if live_size <= 0:
+                        flat_confirmed = True
+                        break
+                    await asyncio.sleep(0.15)
+
+                if not flat_confirmed:
+                    live_size = self.get_live_position_size()
+                    print(
+                        f"[FAST EXIT] Exit order acked but still open size={live_size:.6f}; "
+                        f"will keep monitor active",
+                        flush=True
+                    )
+                    return False
+
                 # Calculate P&L
                 if exit_side == OrderSide.SELL:
                     pnl = (exit_order.price - entry_price) * size
@@ -755,6 +824,7 @@ class MarketMaker:
                     self.total_loss += abs(pnl)
                 
                 self.one_filled += 1
+                self.last_exit_time = time.time()
                 success = True
                 print(f"[FAST EXIT] Done! P&L: ${pnl:.4f}", flush=True)
             else:
@@ -911,6 +981,7 @@ class MarketMaker:
         print(f"  Position size:    ${self.position_size_usd:.2f}")
         print(f"  Max positions:    {self.max_positions}")
         print(f"  Trade cooldown:   {self.min_trade_interval:.0f}s")
+        print(f"  Exit cooldown:    {self.post_exit_cooldown_s:.0f}s")
         print(f"  Entry type:       MARKET (taker)")
         print(f"\nWMA Trend Detection (Streak Strategy):")
         print(f"  WMA Period:       {self.wma_period}")
@@ -1204,6 +1275,7 @@ async def main():
             max_trades=999999,              # No practical limit
             max_loss=5.0,                   # Stop if lose $5
             min_trade_interval=0.0,         # No cooldown (position flips)
+            post_exit_cooldown_s=120.0,     # Block all re-entries for 2 min after any close
             dry_run=False,                  # LIVE MODE
             max_quote_age_ms=1200.0,        # Speed-prioritized freshness gate
             ws_stale_timeout_s=15.0,        # Reduce REST refresh frequency
