@@ -192,7 +192,7 @@ class MarketMaker:
         self.position: Optional[str] = None  # "LONG", "SHORT", or None
 
         # Position management parameters (Streak exits)
-        self.stop_loss_pct = 0.06  # Exit at -6% of position notional
+        self.stop_loss_pct = 0.04  # Exit at -4% of position notional (was 0.06, then 0.02)
         self.position_check_interval = 0.1  # Check every 0.1 seconds
 
         # Trailing take-profit
@@ -502,24 +502,40 @@ class MarketMaker:
         # Check if already filled during placement
         if hasattr(order, 'status') and order.status and 'filled' in str(order.status).lower():
             print(f"[INSTANT FILL] Order filled immediately!", flush=True)
+            print(f"[INSTANT FILL] Starting monitor: side={order.side.value}, price=${order.price:.2f}, size={order.size:.6f}", flush=True)
             self.one_filled += 1
             await self.monitor_position(order.side, order.price, order.size)
+            print(f"[INSTANT FILL] Monitor completed, returning from place_order", flush=True)
             return
 
         # Confirm position before monitoring exits
+        print(f"[ENTRY COMPLETE] Checking position to start monitoring...", flush=True)
         try:
             position = self.client.get_position(self.coin)
+            print(f"[POSITION CHECK] position={position}, size={position.size if position else 'N/A'}", flush=True)
             if position and abs(position.size) > 0:
+                print(f"[MONITOR START] Starting position monitoring for {order.side.value} @ ${order.price:.2f}, size={abs(position.size):.6f}", flush=True)
                 await self.monitor_position(order.side, order.price, abs(position.size))
+                print(f"[MONITOR END] Position monitoring completed", flush=True)
+            else:
+                print(f"[WARNING] Position not found after entry - cannot monitor! position={position}, size={position.size if position else 'N/A'}", flush=True)
+                self.open_positions = 0
+                self.entry_in_flight = False
+                self.position = None
         except Exception as e:
             print(f"[POSITION] Error checking position after entry: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            self.open_positions = 0
+            self.entry_in_flight = False
+            self.position = None
 
     async def monitor_position(self, entry_side: OrderSide, entry_price: float, size: float):
         """
         Monitor an open position for exit conditions.
 
         ALL TAKER EXITS - priority order:
-        1. Stop Loss (-6% notional) -> Taker exit immediately
+        1. Stop Loss (-4% notional) -> Taker exit immediately
         2. Trailing Take-Profit (activate at +N bps, trail M bps from high) -> Taker exit
         3. Opposite 5-in-a-row streak -> Taker exit immediately
         4. Bias-flip exit (bias reverses against position) -> Taker exit immediately
@@ -531,6 +547,7 @@ class MarketMaker:
         """
         position_type = "LONG" if entry_side == OrderSide.BUY else "SHORT"
         print(f"\n{'='*60}", flush=True)
+        print(f"[MONITOR_POSITION ENTRY] Function called! Monitoring {position_type} @ ${entry_price:.2f} | Size: {size:.4f}", flush=True)
         print(f"[POSITION] {position_type} @ ${entry_price:.2f} | Size: {size:.4f}", flush=True)
         print(
             f"[POSITION] Exit: Opposite 5-streak | "
@@ -548,8 +565,13 @@ class MarketMaker:
         trail_high_water_bps = 0.0  # Best mid-based P&L seen (bps)
         trail_stop_bps = 0.0        # Current trailing stop level (bps)
 
+        print(f"[MONITOR LOOP] Starting monitoring loop...", flush=True)
+        loop_iteration = 0
         while True:
             await asyncio.sleep(self.position_check_interval)
+            loop_iteration += 1
+            if loop_iteration % 100 == 0:  # Log every 100 iterations (every 10s at 0.1s interval)
+                print(f"[MONITOR LOOP] Still running... iteration {loop_iteration}", flush=True)
 
             # Get current market data
             bid = self.current_bid
@@ -1135,18 +1157,18 @@ class MarketMaker:
                                         desired_position = "SHORT"
 
                                     if desired_position is not None:
-                                        # Bias gate: block only when bias OPPOSES the trade
-                                        # FLAT/UNKNOWN = allow (let 5s trend decide, bias-flip exit protects)
-                                        if desired_position == "LONG" and bias == "DOWN":
+                                        # Bias gate: REQUIRE bias match (one direction at a time)
+                                        # Only LONG when bias=UP, only SHORT when bias=DOWN
+                                        if desired_position == "LONG" and bias != "UP":
                                             print(
-                                                f"[BIAS BLOCK] wanted LONG, bias={bias} | "
+                                                f"[BIAS BLOCK] wanted LONG, bias={bias} (need UP) | "
                                                 f"up={self.up_streak} down={self.down_streak}",
                                                 flush=True
                                             )
                                             desired_position = None
-                                        elif desired_position == "SHORT" and bias == "UP":
+                                        elif desired_position == "SHORT" and bias != "DOWN":
                                             print(
-                                                f"[BIAS BLOCK] wanted SHORT, bias={bias} | "
+                                                f"[BIAS BLOCK] wanted SHORT, bias={bias} (need DOWN) | "
                                                 f"up={self.up_streak} down={self.down_streak}",
                                                 flush=True
                                             )
@@ -1288,7 +1310,7 @@ async def main():
             trend_exit_bps=8.0,             # Exit trend at +/-8 bps from WMA
             bias_candle_interval_seconds=60,  # 1-min bias candles
             bias_max_candles=2000,
-            bias_wma_period=30,             # ~30 min higher-timeframe bias WMA
+            bias_wma_period=120,            # ~2 hour higher-timeframe bias WMA (was 30)
             bias_price_type="weighted_close",
             bias_enter_bps=4.0,             # Distance from bias WMA to enter
             bias_exit_bps=12.0,             # Wide exit so bias stays locked in

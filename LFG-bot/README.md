@@ -22,8 +22,9 @@ python directional_trend_tester.py
 4. Compute sticky bias state from bias WMA distance + slope + confirmation counters.
 5. Track consecutive fast-trend streaks.
 6. Trigger desired direction after 5-in-a-row (`LONG` on UP streak, `SHORT` on DOWN streak).
-7. Bias gate blocks only opposing bias:
-`LONG` blocked when bias is `DOWN`; `SHORT` blocked when bias is `UP`.
+7. Bias gate REQUIRES match (one direction at a time):
+`LONG` only when bias is `UP`; `SHORT` only when bias is `DOWN`.
+No trading when bias is `FLAT` or `UNKNOWN`.
 8. Place taker-style entries/exits (market emulated via aggressive limit).
 9. Exit priority:
 stop loss -> trailing TP -> opposite 5-streak -> bias-flip.
@@ -62,7 +63,7 @@ mm = MarketMaker(
     trend_exit_bps=8.0,
     bias_candle_interval_seconds=60,
     bias_max_candles=2000,
-    bias_wma_period=30,
+    bias_wma_period=120,
     bias_price_type="weighted_close",
     bias_enter_bps=4.0,
     bias_exit_bps=12.0,
@@ -77,7 +78,7 @@ mm = MarketMaker(
 
 Additional defaults currently used by the class:
 - `required_streak = 5`
-- `stop_loss_pct = 0.06`
+- `stop_loss_pct = 0.04` (4% notional, was 6%)
 - `position_check_interval = 0.1`
 - `wma_slope_shift_candles = 3`
 - `min_wma_slope_bps = 0.8`
@@ -92,6 +93,30 @@ Additional defaults currently used by the class:
 - `debug_positions.py` - raw user-state position diagnostics
 - `lfg_config.py` - credential/env loading
 - `requirements.txt` - Python dependencies
+
+## Recent Changes (2026-02-11)
+
+**Problem:** Bot was flip-flopping between LONG/SHORT too frequently, creating whipsaw losses.
+
+**Root Cause Analysis:**
+1. 30-min bias window too short to identify macro trends
+2. Bias gate allowed trades when bias was FLAT/UNKNOWN (too permissive)
+3. 6% stop loss too wide, allowed runaway losses (e.g., 9.5 hour hold at -$0.14)
+
+**Solutions Implemented:**
+1. **Bias lookback: 30min → 2 hours** (`bias_wma_period=30` → `120`)
+   - Smooths out intra-session chop
+   - Identifies true macro directional movement
+2. **Bias gate: block opposing → require match**
+   - OLD: Allowed LONG when bias=FLAT/UNKNOWN, only blocked when bias=DOWN
+   - NEW: Only LONG when bias=UP, only SHORT when bias=DOWN
+   - Forces one-directional trading for hours at a time
+3. **Stop loss: 6% → 4%** (`stop_loss_pct=0.06` → `0.04`)
+   - Cuts losing trades faster
+   - Max loss per trade: ~$0.44 on $11 position
+4. **Enhanced monitoring logs**
+   - Added diagnostic logging to confirm position monitoring starts correctly
+   - Tracks monitoring loop health
 
 ## Notes
 
