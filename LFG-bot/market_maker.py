@@ -222,14 +222,21 @@ class MarketMaker:
         return (time.monotonic() - self.last_book_update_ts) * 1000
 
     def get_live_position_size(self) -> float:
-        """Return absolute live position size from exchange (0.0 if flat/unknown)."""
+        """Return absolute live position size from exchange.
+
+        Returns:
+            >0: open position size
+            0.0: confirmed flat (no position)
+            -1.0: API error (unknown state - callers must NOT treat as flat)
+        """
         try:
             position = self.client.get_position(self.coin)
             if position and abs(position.size) > 0:
                 return abs(position.size)
+            return 0.0
         except Exception as e:
             print(f"[POSITION] Live position check failed: {e}", flush=True)
-        return 0.0
+            return -1.0
 
     async def ensure_fresh_quote(
         self,
@@ -347,9 +354,10 @@ class MarketMaker:
                     self._last_exit_cooldown_log_ts = time.time()
                 return None
 
-        # Exchange truth gate: if live position exists, block new entries and re-sync state.
+        # Exchange truth gate: if live position exists OR API fails, block new entries.
+        # API error (-1.0) is treated as "assume position exists" for safety.
         live_size = self.get_live_position_size()
-        if live_size > 0:
+        if live_size != 0.0:
             self.open_positions = 1
             if not hasattr(self, "_live_position_gate_log_ts") or time.time() - self._live_position_gate_log_ts > 10:
                 print(f"[LIVE POSITION BLOCK] Exchange shows open size={live_size:.6f} - skipping new entry", flush=True)
@@ -844,19 +852,21 @@ class MarketMaker:
             
             if exit_order:
                 # Confirm position is actually flat before clearing internal state.
+                # CRITICAL: Only treat confirmed 0.0 as flat. API errors (-1.0) are NOT flat.
                 flat_confirmed = False
                 confirm_deadline = time.time() + 3.0
                 while time.time() < confirm_deadline:
                     live_size = self.get_live_position_size()
-                    if live_size <= 0:
+                    if live_size == 0.0:  # Confirmed flat (not -1.0 API error)
                         flat_confirmed = True
                         break
                     await asyncio.sleep(0.15)
 
                 if not flat_confirmed:
                     live_size = self.get_live_position_size()
+                    size_str = f"{live_size:.6f}" if live_size >= 0 else "API_ERROR"
                     print(
-                        f"[FAST EXIT] Exit order acked but still open size={live_size:.6f}; "
+                        f"[FAST EXIT] Exit order acked but not confirmed flat (size={size_str}); "
                         f"will keep monitor active",
                         flush=True
                     )
@@ -1363,6 +1373,65 @@ async def main():
             exit_on_bias_flip=True,           # Exit if bias reverses against position
             max_hold_seconds=3600.0,          # Force exit after 60 min
         )
+
+        # ======================================================================
+        # STARTUP SAFETY: Close any orphaned position before starting
+        # ======================================================================
+        coin = "xyz:SILVER"
+        print(f"Checking for orphaned positions on {coin}...", flush=True)
+        try:
+            pos = client.get_position(coin)
+            if pos and abs(pos.size) > 0:
+                orphan_size = abs(pos.size)
+                orphan_side = "LONG" if pos.size > 0 else "SHORT"
+                print(f"[ORPHAN] Found open {orphan_side} position: size={orphan_size:.6f}", flush=True)
+                print(f"[ORPHAN] Closing immediately...", flush=True)
+
+                # Determine exit side and price
+                book = client.get_order_book(coin)
+                if book and book.best_bid and book.best_ask:
+                    if pos.size > 0:
+                        # Long: sell at bid
+                        exit_side = OrderSide.SELL
+                        exit_price = client.format_price(coin, book.best_bid * 0.9995)
+                    else:
+                        # Short: buy at ask
+                        exit_side = OrderSide.BUY
+                        exit_price = client.format_price(coin, book.best_ask * 1.0005)
+
+                    exit_order = client.place_limit_order(
+                        coin=coin,
+                        side=exit_side,
+                        price=exit_price,
+                        size=orphan_size,
+                        reduce_only=True,
+                        post_only=False,
+                        dry_run=False,
+                    )
+                    if exit_order:
+                        # Wait for flat confirmation
+                        import time as _time
+                        deadline = _time.time() + 5.0
+                        while _time.time() < deadline:
+                            check = client.get_position(coin)
+                            if not check or abs(check.size) <= 0:
+                                print(f"[ORPHAN] Position closed successfully!", flush=True)
+                                break
+                            await asyncio.sleep(0.25)
+                        else:
+                            check = client.get_position(coin)
+                            if check and abs(check.size) > 0:
+                                print(f"[ORPHAN] WARNING: Position may still be open (size={abs(check.size):.6f})", flush=True)
+                    else:
+                        print(f"[ORPHAN] WARNING: Exit order rejected!", flush=True)
+                else:
+                    print(f"[ORPHAN] WARNING: Cannot get order book to close position!", flush=True)
+            else:
+                print("No orphaned positions found. Clean start.", flush=True)
+        except Exception as e:
+            print(f"[ORPHAN] Error checking/closing orphaned position: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
 
         print("Starting market maker...", flush=True)
         await mm.run()
