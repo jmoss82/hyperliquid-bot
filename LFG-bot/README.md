@@ -27,17 +27,21 @@ python directional_trend_tester.py
 No trading when bias is `FLAT` or `UNKNOWN`.
 8. Place taker-style entries/exits (market emulated via aggressive limit).
 9. Exit priority:
-stop loss -> trailing TP -> opposite 5-streak -> bias-flip.
+stop loss -> trailing TP -> opposite 5-streak -> bias-flip -> max hold time (60 min).
 
 ## Position-Safety Guards (Current)
 
-- Universal post-exit cooldown:
+- **Startup orphan recovery:**
+on launch, bot checks exchange for any open position and closes it immediately before starting the main loop. Prevents stuck positions after restart.
+- **Universal post-exit cooldown:**
 `post_exit_cooldown_s=120.0` blocks all new entries for 2 minutes after any confirmed close.
-- Exchange-truth entry gate:
-before entry, bot checks live position via API and blocks if non-flat.
-- Exit confirmation:
-after sending reduce-only exit, bot waits for live position to be flat before clearing internal state.
+- **Exchange-truth entry gate:**
+before entry, bot checks live position via API and blocks if non-flat. API errors are treated as "position exists" (fail-safe).
+- **Exit confirmation:**
+after sending reduce-only exit, bot waits for confirmed flat (size=0.0) before clearing internal state. API errors during confirmation are NOT treated as flat — monitor stays active.
 - If exit is acknowledged but position remains open, bot keeps monitoring and retries on next loop.
+- **Max hold time:**
+`max_hold_seconds=3600.0` forces exit after 60 minutes regardless of P&L.
 
 ## Current Runtime Config (`market_maker.py` main)
 
@@ -73,6 +77,7 @@ mm = MarketMaker(
     trailing_tp_activation_bps=20.0,
     trailing_tp_trail_bps=25.0,
     exit_on_bias_flip=True,
+    max_hold_seconds=3600.0,
 )
 ```
 
@@ -94,9 +99,23 @@ Additional defaults currently used by the class:
 - `lfg_config.py` - credential/env loading
 - `requirements.txt` - Python dependencies
 
-## Recent Changes (2026-02-11)
+## Recent Changes
 
-### Fix 2: Bias race condition + parameter rebalance
+### Fix 3: False-flat bug + orphan recovery + max hold (2026-02-12)
+
+**Problem:** Bot entered a SHORT, then `monitor_position` exited without closing the position. The position sat unmonitored for 4+ hours with no exit logic running. Logs showed `[LIVE POSITION BLOCK]` with no `[HOLDING]` messages.
+
+**Root Cause Analysis:**
+1. **False-flat bug:** `get_live_position_size()` returned `0.0` on API errors (network blip, timeout). During exit confirmation, this was mistaken for "position is closed." The monitor exited, but the position was still open on the exchange.
+2. **No orphan recovery:** After kill/restart, any pre-existing position had no monitor and no way to be closed automatically.
+3. **No max hold time:** Positions could be held indefinitely if no other exit condition triggered.
+
+**Solutions Implemented:**
+1. **Fixed false-flat bug:** `get_live_position_size()` now returns `-1.0` on API error. Exit confirmation only treats explicit `0.0` as flat. Entry gate also blocks on API errors (fail-safe).
+2. **Startup orphan recovery:** On launch, bot checks exchange for open positions and closes them before starting the main loop.
+3. **Max hold time exit:** New exit condition 5 — forces taker exit after `max_hold_seconds` (default 60 min). Prevents runaway holds.
+
+### Fix 2: Bias race condition + parameter rebalance (2026-02-11)
 
 **Problem:** After Fix 1, bot made ZERO trades in 8 hours. Bias was stuck at "UNKNOWN" with `WMA:n/a` the entire day despite 19-21 consecutive UP streaks being blocked.
 
@@ -115,7 +134,7 @@ Additional defaults currently used by the class:
    - Detects momentum shifts faster
 5. **Added bias candle diagnostics:** Status log now shows `N:{count}/{needed}` so warmup progress is visible. Bias candle completions are logged independently.
 
-### Fix 1: Anti-whipsaw measures
+### Fix 1: Anti-whipsaw measures (2026-02-11)
 
 **Problem:** Bot was flip-flopping between LONG/SHORT too frequently, creating whipsaw losses.
 
