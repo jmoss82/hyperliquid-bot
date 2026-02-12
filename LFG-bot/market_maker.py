@@ -74,13 +74,13 @@ class MarketMaker:
         min_wma_slope_bps: float = 0.8,
         bias_candle_interval_seconds: int = 60,
         bias_max_candles: int = 1200,
-        bias_wma_period: int = 150,
+        bias_wma_period: int = 45,
         bias_price_type: str = "weighted_close",
         bias_enter_bps: float = 4.0,
         bias_exit_bps: float = 12.0,
-        bias_slope_shift_candles: int = 18,
+        bias_slope_shift_candles: int = 3,
         bias_min_slope_bps: float = 0.4,
-        bias_confirm_candles: int = 8,
+        bias_confirm_candles: int = 2,
         # Trailing take-profit
         trailing_tp_activation_bps: float = 20.0,
         trailing_tp_trail_bps: float = 25.0,
@@ -1074,6 +1074,38 @@ class MarketMaker:
                                 completed_candle = self.candle_builder.update(bid, ask)
                                 completed_bias_candle = self.bias_candle_builder.update(bid, ask)
 
+                                # ----------------------------------------
+                                # BIAS: Process independently of fast candle
+                                # (Fixes race where both had to complete on
+                                #  the same WS tick for bias to update)
+                                # ----------------------------------------
+                                if completed_bias_candle:
+                                    bias_eval_price = self.candle_price_for(completed_bias_candle, self.bias_price_type)
+                                    bias_wma = self.bias_candle_builder.calculate_wma(
+                                        self.bias_wma_period,
+                                        self.bias_price_type
+                                    )
+                                    bias_slope_bps = self.get_price_slope_bps(
+                                        self.bias_price_type,
+                                        self.bias_slope_shift_candles,
+                                        candle_builder=self.bias_candle_builder
+                                    )
+                                    self.update_bias_state(bias_wma, bias_eval_price, bias_slope_bps)
+                                    bias_distance_bps = None
+                                    if bias_wma and bias_eval_price:
+                                        bias_distance_bps = ((bias_eval_price - bias_wma) / bias_wma) * 10000
+                                    self.last_bias_wma = bias_wma
+                                    self.last_bias_eval_price = bias_eval_price
+                                    self.last_bias_slope_bps = bias_slope_bps
+                                    self.last_bias_distance_bps = bias_distance_bps
+                                    n_bias = len(self.bias_candle_builder.candles)
+                                    wma_str_b = f"${bias_wma:.3f}" if bias_wma else f"n/a (need {self.bias_wma_period})"
+                                    print(
+                                        f"[BIAS CANDLE #{n_bias}] WMA: {wma_str_b} | "
+                                        f"State: {self.bias_state} | Raw: {self.bias_last_raw}",
+                                        flush=True
+                                    )
+
                                 if completed_candle:
                                     eval_price = self.candle_price(completed_candle)
                                     wma = self.candle_builder.calculate_wma(self.wma_period, self.wma_price_type)
@@ -1083,30 +1115,9 @@ class MarketMaker:
                                     distance_bps = None
                                     if wma and eval_price:
                                         distance_bps = ((eval_price - wma) / wma) * 10000
-                                    if completed_bias_candle:
-                                        bias_eval_price = self.candle_price_for(completed_bias_candle, self.bias_price_type)
-                                        bias_wma = self.bias_candle_builder.calculate_wma(
-                                            self.bias_wma_period,
-                                            self.bias_price_type
-                                        )
-                                        bias_slope_bps = self.get_price_slope_bps(
-                                            self.bias_price_type,
-                                            self.bias_slope_shift_candles,
-                                            candle_builder=self.bias_candle_builder
-                                        )
-                                        bias_raw = self.bias_trend_from_price(bias_wma, bias_eval_price, bias_slope_bps)
-                                        bias = self.update_bias_state(bias_wma, bias_eval_price, bias_slope_bps)
-                                        bias_distance_bps = None
-                                        if bias_wma and bias_eval_price:
-                                            bias_distance_bps = ((bias_eval_price - bias_wma) / bias_wma) * 10000
-                                        self.last_bias_wma = bias_wma
-                                        self.last_bias_eval_price = bias_eval_price
-                                        self.last_bias_slope_bps = bias_slope_bps
-                                        self.last_bias_distance_bps = bias_distance_bps
-                                    else:
-                                        bias_raw = self.bias_last_raw
-                                        bias = self.bias_state
-                                        bias_distance_bps = self.last_bias_distance_bps
+                                    # Use stored bias state (updated independently above)
+                                    bias = self.bias_state
+                                    bias_distance_bps = self.last_bias_distance_bps
 
                                     self.last_eval_price = eval_price
                                     self.last_wma = wma
@@ -1126,7 +1137,7 @@ class MarketMaker:
 
                                     if bias != self.last_bias:
                                         print(f"\n{'='*60}", flush=True)
-                                        print(f"[BIAS CHANGE] {self.last_bias} -> {bias} (raw {bias_raw})", flush=True)
+                                        print(f"[BIAS CHANGE] {self.last_bias} -> {bias} (raw {self.bias_last_raw})", flush=True)
                                         if self.last_bias_wma and self.last_bias_eval_price:
                                             slope_str = (
                                                 f"{self.last_bias_slope_bps:+.1f}"
@@ -1192,12 +1203,13 @@ class MarketMaker:
                                         if self.last_bias_slope_bps is not None
                                         else "n/a"
                                     )
+                                    n_bias_candles = len(self.bias_candle_builder.candles)
                                     line = (
                                         f"[{ts}] Price: ${eval_price:.3f} | WMA: ${wma_str} | "
                                         f"Dist: {dist_str} bps | Slope: {slope_bps:+.1f} bps | "
                                         f"Trend: {trend} | "
                                         f"Bias: {bias} (WMA:{bias_str} Dist:{bias_dist_str} "
-                                        f"Slope:{bias_slope_str}) | "
+                                        f"Slope:{bias_slope_str} N:{n_bias_candles}/{self.bias_wma_period}) | "
                                         f"streaks U:{self.up_streak} D:{self.down_streak} | "
                                         f"pos: {self.position or 'FLAT'}"
                                     )
@@ -1310,13 +1322,13 @@ async def main():
             trend_exit_bps=8.0,             # Exit trend at +/-8 bps from WMA
             bias_candle_interval_seconds=60,  # 1-min bias candles
             bias_max_candles=2000,
-            bias_wma_period=120,            # ~2 hour higher-timeframe bias WMA (was 30)
+            bias_wma_period=45,             # ~45 min higher-timeframe bias WMA (was 120, before that 30)
             bias_price_type="weighted_close",
             bias_enter_bps=4.0,             # Distance from bias WMA to enter
             bias_exit_bps=12.0,             # Wide exit so bias stays locked in
-            bias_slope_shift_candles=6,     # ~6 min slope window (1-min candles)
+            bias_slope_shift_candles=3,     # ~3 min slope window (1-min candles, was 6)
             bias_min_slope_bps=0.4,         # Slightly forgiving (longer window smooths)
-            bias_confirm_candles=4,         # ~4 min confirmation before bias flips
+            bias_confirm_candles=2,         # ~2 min confirmation before bias flips (was 4)
             trailing_tp_activation_bps=20.0,  # Trail activates after +20 bps profit (mid)
             trailing_tp_trail_bps=25.0,       # 25 bps trail width from high-water mark
             exit_on_bias_flip=True,           # Exit if bias reverses against position

@@ -63,13 +63,13 @@ mm = MarketMaker(
     trend_exit_bps=8.0,
     bias_candle_interval_seconds=60,
     bias_max_candles=2000,
-    bias_wma_period=120,
+    bias_wma_period=45,
     bias_price_type="weighted_close",
     bias_enter_bps=4.0,
     bias_exit_bps=12.0,
-    bias_slope_shift_candles=6,
+    bias_slope_shift_candles=3,
     bias_min_slope_bps=0.4,
-    bias_confirm_candles=4,
+    bias_confirm_candles=2,
     trailing_tp_activation_bps=20.0,
     trailing_tp_trail_bps=25.0,
     exit_on_bias_flip=True,
@@ -96,6 +96,27 @@ Additional defaults currently used by the class:
 
 ## Recent Changes (2026-02-11)
 
+### Fix 2: Bias race condition + parameter rebalance
+
+**Problem:** After Fix 1, bot made ZERO trades in 8 hours. Bias was stuck at "UNKNOWN" with `WMA:n/a` the entire day despite 19-21 consecutive UP streaks being blocked.
+
+**Root Cause Analysis:**
+1. **Race condition bug:** Bias candle processing was nested inside `if completed_candle:`, requiring both the 5-second fast candle and 60-second bias candle to complete on the *exact same* websocket message. When they didn't align (most of the time), the bias WMA was never calculated and `update_bias_state()` never ran.
+2. **2-hour bias WMA too slow:** Even without the bug, `bias_wma_period=120` needs 120 one-minute candles (2 hours) before producing any value. Combined with 4-confirmation requirement and strict match gate, effectively paralyzed the bot.
+
+**Solutions Implemented:**
+1. **Fixed bias race condition:** Moved bias candle processing to its own independent `if completed_bias_candle:` block, no longer nested inside fast candle processing. Bias state now updates every 60 seconds regardless of fast candle timing.
+2. **Bias lookback: 2hr → 45min** (`bias_wma_period=120` → `45`)
+   - 45-min warmup instead of 2 hours
+   - Responsive enough to catch intra-session moves
+3. **Bias confirmation: 4 → 2** (`bias_confirm_candles=4` → `2`)
+   - 2 minutes to lock in direction instead of 4
+4. **Bias slope window: 6 → 3** (`bias_slope_shift_candles=6` → `3`)
+   - Detects momentum shifts faster
+5. **Added bias candle diagnostics:** Status log now shows `N:{count}/{needed}` so warmup progress is visible. Bias candle completions are logged independently.
+
+### Fix 1: Anti-whipsaw measures
+
 **Problem:** Bot was flip-flopping between LONG/SHORT too frequently, creating whipsaw losses.
 
 **Root Cause Analysis:**
@@ -104,7 +125,7 @@ Additional defaults currently used by the class:
 3. 6% stop loss too wide, allowed runaway losses (e.g., 9.5 hour hold at -$0.14)
 
 **Solutions Implemented:**
-1. **Bias lookback: 30min → 2 hours** (`bias_wma_period=30` → `120`)
+1. **Bias lookback: 30min → 2 hours** (`bias_wma_period=30` → `120`, now `45`)
    - Smooths out intra-session chop
    - Identifies true macro directional movement
 2. **Bias gate: block opposing → require match**
