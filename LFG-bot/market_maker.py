@@ -86,6 +86,8 @@ class MarketMaker:
         trailing_tp_trail_bps: float = 25.0,
         # Bias-flip exit
         exit_on_bias_flip: bool = True,
+        # Max hold time
+        max_hold_seconds: float = 3600.0,
     ):
         self.client = client
         self.coin = coin
@@ -201,6 +203,9 @@ class MarketMaker:
 
         # Bias-flip exit
         self.exit_on_bias_flip = exit_on_bias_flip
+
+        # Max hold time
+        self.max_hold_seconds = max_hold_seconds
 
     def _normalize_status(self, status: Optional[XYZOrderStatus]) -> str:
         """Normalize order status to internal uppercase strings."""
@@ -539,6 +544,7 @@ class MarketMaker:
         2. Trailing Take-Profit (activate at +N bps, trail M bps from high) -> Taker exit
         3. Opposite 5-in-a-row streak -> Taker exit immediately
         4. Bias-flip exit (bias reverses against position) -> Taker exit immediately
+        5. Max hold time -> Taker exit immediately
 
         Args:
             entry_side: The side we entered (BUY for long, SELL for short)
@@ -553,7 +559,8 @@ class MarketMaker:
             f"[POSITION] Exit: Opposite 5-streak | "
             f"SL -{self.stop_loss_pct:.2%} notional | "
             f"Trail TP {self.trailing_tp_trail_bps:.0f}bps (activate +{self.trailing_tp_activation_bps:.0f}bps)"
-            f"{' | Bias-flip' if self.exit_on_bias_flip else ''}",
+            f"{' | Bias-flip' if self.exit_on_bias_flip else ''}"
+            f" | Max hold {self.max_hold_seconds/60:.0f}min",
             flush=True
         )
         print(f"{'='*60}\n", flush=True)
@@ -737,6 +744,27 @@ class MarketMaker:
                         return
                     print("[BIAS EXIT] Exit not confirmed flat yet; continuing monitor/retry.", flush=True)
                     continue
+
+            # ====================================================================================
+            # CONDITION 5: MAX HOLD TIME
+            # If position has been open longer than max_hold_seconds, exit
+            # ====================================================================================
+            if self.max_hold_seconds > 0 and elapsed >= self.max_hold_seconds:
+                hold_min = elapsed / 60
+                print(
+                    f"\n[MAX HOLD] Position held {hold_min:.1f} min (limit {self.max_hold_seconds/60:.0f} min) | "
+                    f"P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f})",
+                    flush=True
+                )
+                print(f"[MAX HOLD] Exiting {position_type} as TAKER", flush=True)
+                exit_ok = await self.exit_position_fast(entry_side, entry_price, size)
+                if exit_ok:
+                    self.open_positions = 0
+                    self.entry_in_flight = False
+                    self.position = None
+                    return
+                print("[MAX HOLD] Exit not confirmed flat yet; continuing monitor/retry.", flush=True)
+                continue
 
             # ====================================================================================
             # Still holding - log periodic updates (every 10 seconds)
@@ -1024,6 +1052,7 @@ class MarketMaker:
         print(f"  Trailing TP:      {self.trailing_tp_trail_bps:.0f} bps trail, activate after +{self.trailing_tp_activation_bps:.0f} bps")
         print(f"  Trail Tracking:   Mid-price (trigger on bid/ask)")
         print(f"  Bias-Flip Exit:   {'ON' if self.exit_on_bias_flip else 'OFF'}")
+        print(f"  Max Hold Time:    {self.max_hold_seconds/60:.0f} min")
         print(f"\nSafety Limits:")
         print(f"  Max trades:       {self.max_trades}")
         print(f"  Max loss:         ${self.max_loss:.2f}")
@@ -1332,6 +1361,7 @@ async def main():
             trailing_tp_activation_bps=20.0,  # Trail activates after +20 bps profit (mid)
             trailing_tp_trail_bps=25.0,       # 25 bps trail width from high-water mark
             exit_on_bias_flip=True,           # Exit if bias reverses against position
+            max_hold_seconds=3600.0,          # Force exit after 60 min
         )
 
         print("Starting market maker...", flush=True)
