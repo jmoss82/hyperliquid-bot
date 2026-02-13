@@ -56,3 +56,10 @@ xyz-100-bot/
 # Data files (optional - uncomment if you don't want to commit data)
 # *.json
 # *.csv
+
+# Local testing scripts
+analyze_section.py
+analyze_trades.py
+check_overlaps.py
+LFG-bot/directional_trend_tester_original.py
+git

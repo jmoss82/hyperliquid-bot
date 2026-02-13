@@ -27,7 +27,7 @@ python directional_trend_tester.py
 No trading when bias is `FLAT` or `UNKNOWN`.
 8. Place taker-style entries/exits (market emulated via aggressive limit).
 9. Exit priority:
-stop loss -> trailing TP -> opposite 5-streak -> bias-flip -> max hold time (60 min).
+max hold time (60 min) -> stop loss -> trailing TP -> opposite 5-streak -> bias-flip.
 
 ## Position-Safety Guards (Current)
 
@@ -100,6 +100,20 @@ Additional defaults currently used by the class:
 - `requirements.txt` - Python dependencies
 
 ## Recent Changes
+
+### Fix 4: Opposite streak exit blocked by bias gate + max hold priority (2026-02-13)
+
+**Problem:** Positions held well past the 60-minute max hold time. Opposite 5-in-a-row streaks clearly visible on the chart did not trigger exits.
+
+**Root Cause Analysis:**
+1. **Bias gate blocked exit signals:** The opposite-streak exit in `monitor_position` checked `self.desired_position`, which is set in the websocket loop *after* the bias gate. When bias didn't match the opposite direction (e.g., bias still `UP` while a LONG needed to exit on 5 consecutive DOWN candles), the bias gate set `desired_position = None`. The monitor never saw the exit signal. The bias gate was designed for entries, but it was inadvertently filtering exits too.
+2. **Max hold was lowest priority:** Max hold was condition 5 of 5. When any earlier condition (stop loss, trailing TP, bias flip) triggered and `exit_position_fast` failed to confirm flat within 3 seconds, the `continue` restarted the loop from condition 1. The same earlier condition kept firing, and condition 5 was never evaluated.
+
+**Solutions Implemented:**
+1. **Decoupled opposite streak exits from bias gate:** Monitor now checks raw streak counters directly (`self.down_streak >= 5` for longs, `self.up_streak >= 5` for shorts) instead of `self.desired_position`. Bias gate still applies to entries — only the exit check changed.
+2. **Max hold promoted to highest priority:** Moved from condition 5 to condition 1. Now checked FIRST on every loop iteration, guaranteeing the 60-minute limit is never starved by other conditions.
+
+**What was NOT changed:** Entry logic, bias gating for entries, candle building, trend detection, streak counting, trailing TP, stop loss parameters — all unchanged.
 
 ### Fix 3: False-flat bug + orphan recovery + max hold (2026-02-12)
 

@@ -548,11 +548,11 @@ class MarketMaker:
         Monitor an open position for exit conditions.
 
         ALL TAKER EXITS - priority order:
-        1. Stop Loss (-4% notional) -> Taker exit immediately
-        2. Trailing Take-Profit (activate at +N bps, trail M bps from high) -> Taker exit
-        3. Opposite 5-in-a-row streak -> Taker exit immediately
-        4. Bias-flip exit (bias reverses against position) -> Taker exit immediately
-        5. Max hold time -> Taker exit immediately
+        1. Max hold time -> Taker exit immediately (highest priority safety net)
+        2. Stop Loss (-4% notional) -> Taker exit immediately
+        3. Trailing Take-Profit (activate at +N bps, trail M bps from high) -> Taker exit
+        4. Opposite 5-in-a-row streak (raw counters, no bias gate) -> Taker exit immediately
+        5. Bias-flip exit (bias reverses against position) -> Taker exit immediately
 
         Args:
             entry_side: The side we entered (BUY for long, SELL for short)
@@ -618,7 +618,29 @@ class MarketMaker:
             elapsed = time.time() - entry_time
 
             # ====================================================================================
-            # CONDITION 1: STOP LOSS (percent of notional)
+            # CONDITION 1: MAX HOLD TIME (highest priority safety net)
+            # If position has been open longer than max_hold_seconds, exit immediately.
+            # Checked FIRST so the time limit is never starved by other conditions.
+            # ====================================================================================
+            if self.max_hold_seconds > 0 and elapsed >= self.max_hold_seconds:
+                hold_min = elapsed / 60
+                print(
+                    f"\n[MAX HOLD] Position held {hold_min:.1f} min (limit {self.max_hold_seconds/60:.0f} min) | "
+                    f"P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f})",
+                    flush=True
+                )
+                print(f"[MAX HOLD] Exiting {position_type} as TAKER", flush=True)
+                exit_ok = await self.exit_position_fast(entry_side, entry_price, size)
+                if exit_ok:
+                    self.open_positions = 0
+                    self.entry_in_flight = False
+                    self.position = None
+                    return
+                print("[MAX HOLD] Exit not confirmed flat yet; continuing monitor/retry.", flush=True)
+                continue
+
+            # ====================================================================================
+            # CONDITION 2: STOP LOSS (percent of notional)
             # ====================================================================================
             max_loss_dollars = entry_price * size * self.stop_loss_pct
             if pnl_dollars <= -max_loss_dollars:
@@ -638,7 +660,7 @@ class MarketMaker:
                 continue
 
             # ====================================================================================
-            # CONDITION 2: TRAILING TAKE-PROFIT
+            # CONDITION 3: TRAILING TAKE-PROFIT
             # Track high-water mark on mid; trigger exit on bid/ask P&L
             # ====================================================================================
             if mid_pnl_bps >= self.trailing_tp_activation_bps:
@@ -682,12 +704,13 @@ class MarketMaker:
                 continue
 
             # ====================================================================================
-            # CONDITION 3: OPPOSITE STREAK EXIT (5 in a row)
+            # CONDITION 4: OPPOSITE STREAK EXIT (5 in a row)
+            # Uses raw streak counters — NOT gated by bias. Bias gate is for entries only.
             # Exit only — do NOT carry the signal into a new entry.
             # Clear desired_position and reset streaks so the bot must build
             # a fresh 5-in-a-row before entering the opposite direction.
             # ====================================================================================
-            if entry_side == OrderSide.BUY and self.desired_position == "SHORT":
+            if entry_side == OrderSide.BUY and self.down_streak >= self.required_streak:
                 print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting LONG (no auto-flip)", flush=True)
                 exit_ok = await self.exit_position_fast(entry_side, entry_price, size)
                 if exit_ok:
@@ -701,7 +724,7 @@ class MarketMaker:
                 print("[STREAK EXIT] Exit not confirmed flat yet; continuing monitor/retry.", flush=True)
                 continue
 
-            if entry_side == OrderSide.SELL and self.desired_position == "LONG":
+            if entry_side == OrderSide.SELL and self.up_streak >= self.required_streak:
                 print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting SHORT (no auto-flip)", flush=True)
                 exit_ok = await self.exit_position_fast(entry_side, entry_price, size)
                 if exit_ok:
@@ -716,7 +739,7 @@ class MarketMaker:
                 continue
 
             # ====================================================================================
-            # CONDITION 4: BIAS-FLIP EXIT
+            # CONDITION 5: BIAS-FLIP EXIT
             # If bias reverses against position direction, exit immediately
             # ====================================================================================
             if self.exit_on_bias_flip:
@@ -752,27 +775,6 @@ class MarketMaker:
                         return
                     print("[BIAS EXIT] Exit not confirmed flat yet; continuing monitor/retry.", flush=True)
                     continue
-
-            # ====================================================================================
-            # CONDITION 5: MAX HOLD TIME
-            # If position has been open longer than max_hold_seconds, exit
-            # ====================================================================================
-            if self.max_hold_seconds > 0 and elapsed >= self.max_hold_seconds:
-                hold_min = elapsed / 60
-                print(
-                    f"\n[MAX HOLD] Position held {hold_min:.1f} min (limit {self.max_hold_seconds/60:.0f} min) | "
-                    f"P&L: {pnl_bps:.1f} bps (${pnl_dollars:.4f})",
-                    flush=True
-                )
-                print(f"[MAX HOLD] Exiting {position_type} as TAKER", flush=True)
-                exit_ok = await self.exit_position_fast(entry_side, entry_price, size)
-                if exit_ok:
-                    self.open_positions = 0
-                    self.entry_in_flight = False
-                    self.position = None
-                    return
-                print("[MAX HOLD] Exit not confirmed flat yet; continuing monitor/retry.", flush=True)
-                continue
 
             # ====================================================================================
             # Still holding - log periodic updates (every 10 seconds)
