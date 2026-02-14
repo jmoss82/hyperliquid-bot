@@ -207,6 +207,11 @@ class MarketMaker:
         # Max hold time
         self.max_hold_seconds = max_hold_seconds
 
+        # Loss streak cooldown
+        self.consecutive_losses = 0
+        self.loss_streak_threshold = 2          # Number of consecutive losses to trigger extended cooldown
+        self.loss_streak_cooldown_s = 900.0     # 15 minutes
+
     def _normalize_status(self, status: Optional[XYZOrderStatus]) -> str:
         """Normalize order status to internal uppercase strings."""
         if isinstance(status, XYZOrderStatus):
@@ -345,12 +350,18 @@ class MarketMaker:
             return None
 
         # Universal cooldown after any successful exit
-        if self.last_exit_time > 0 and self.post_exit_cooldown_s > 0:
+        # Extended to 15 min after consecutive losses (chop protection)
+        if self.consecutive_losses >= self.loss_streak_threshold:
+            cooldown = self.loss_streak_cooldown_s
+        else:
+            cooldown = self.post_exit_cooldown_s
+        if self.last_exit_time > 0 and cooldown > 0:
             time_since_exit = time.time() - self.last_exit_time
-            if time_since_exit < self.post_exit_cooldown_s:
+            if time_since_exit < cooldown:
                 if not hasattr(self, "_last_exit_cooldown_log_ts") or time.time() - self._last_exit_cooldown_log_ts > 10:
-                    remaining = self.post_exit_cooldown_s - time_since_exit
-                    print(f"[EXIT COOLDOWN] {remaining:.1f}s remaining before next entry", flush=True)
+                    remaining = cooldown - time_since_exit
+                    streak_note = f" (loss streak: {self.consecutive_losses})" if self.consecutive_losses >= self.loss_streak_threshold else ""
+                    print(f"[EXIT COOLDOWN] {remaining:.1f}s remaining before next entry{streak_note}", flush=True)
                     self._last_exit_cooldown_log_ts = time.time()
                 return None
 
@@ -882,13 +893,18 @@ class MarketMaker:
                 
                 if pnl >= 0:
                     self.total_profit += pnl
+                    self.consecutive_losses = 0
                 else:
                     self.total_loss += abs(pnl)
+                    self.consecutive_losses += 1
                 
                 self.one_filled += 1
                 self.last_exit_time = time.time()
                 success = True
-                print(f"[FAST EXIT] Done! P&L: ${pnl:.4f}", flush=True)
+                streak_info = ""
+                if self.consecutive_losses >= self.loss_streak_threshold:
+                    streak_info = f" | LOSS STREAK {self.consecutive_losses} -> {self.loss_streak_cooldown_s/60:.0f}min cooldown"
+                print(f"[FAST EXIT] Done! P&L: ${pnl:.4f}{streak_info}", flush=True)
             else:
                 print(f"[FAST EXIT] Exit order failed!", flush=True)
                 
@@ -1043,7 +1059,7 @@ class MarketMaker:
         print(f"  Position size:    ${self.position_size_usd:.2f}")
         print(f"  Max positions:    {self.max_positions}")
         print(f"  Trade cooldown:   {self.min_trade_interval:.0f}s")
-        print(f"  Exit cooldown:    {self.post_exit_cooldown_s:.0f}s")
+        print(f"  Exit cooldown:    {self.post_exit_cooldown_s:.0f}s (normal) / {self.loss_streak_cooldown_s:.0f}s (after {self.loss_streak_threshold}+ losses)")
         print(f"  Entry type:       MARKET (taker)")
         print(f"\nWMA Trend Detection (Streak Strategy):")
         print(f"  WMA Period:       {self.wma_period}")

@@ -39,6 +39,8 @@ on WebSocket disconnect, bot immediately attempts to close any open position via
 on launch, bot checks exchange for any open position and closes it immediately before starting the main loop. Prevents stuck positions after restart.
 - **Universal post-exit cooldown:**
 `post_exit_cooldown_s=120.0` blocks all new entries for 2 minutes after any confirmed close.
+- **Loss streak extended cooldown:**
+after 2+ consecutive losing trades, cooldown extends to 15 minutes (`loss_streak_cooldown_s=900.0`). Resets to normal 2-minute cooldown after any winning trade. Prevents re-entering during chop.
 - **Exchange-truth entry gate:**
 before entry, bot checks live position via API and blocks if non-flat. API errors are treated as "position exists" (fail-safe).
 - **Exit confirmation:**
@@ -91,6 +93,9 @@ Additional defaults currently used by the class:
 - `position_check_interval = 0.1`
 - `wma_slope_shift_candles = 3`
 - `min_wma_slope_bps = 0.8`
+- `consecutive_losses = 0` (tracks back-to-back losses)
+- `loss_streak_threshold = 2` (consecutive losses to trigger extended cooldown)
+- `loss_streak_cooldown_s = 900.0` (15 min cooldown after loss streak)
 
 ## Files
 
@@ -104,6 +109,10 @@ Additional defaults currently used by the class:
 - `requirements.txt` - Python dependencies
 
 ## Recent Changes
+
+### Enhancement: Loss streak extended cooldown (2026-02-14)
+
+Added 15-minute cooldown after 2+ consecutive losing trades to avoid re-entering during chop. Normal 2-minute cooldown still applies after wins or single losses. Counter resets to 0 on any winning trade. Uses the existing cooldown mechanism — no new blockers or strategy changes.
 
 ### Fix 5: WS crash kills monitor — add emergency exit + auto-reconnect (2026-02-14)
 
