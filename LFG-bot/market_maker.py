@@ -1295,22 +1295,135 @@ class MarketMaker:
                 print(f"[LATENCY] WS ping error: {e}", flush=True)
                 return
 
-    async def run(self):
-        """Run the market maker"""
+    async def _emergency_close(self):
+        """Emergency position close via REST when WS is dead.
+
+        Called after a WS crash to close any orphaned position before
+        reconnecting. Uses REST API for both quotes and order placement.
+        """
+        # Check exchange for actual open position (don't trust internal state alone)
+        live_size = self.get_live_position_size()
+        if live_size == 0.0:
+            print("[EMERGENCY] Position confirmed flat on exchange", flush=True)
+            self.position = None
+            self.open_positions = 0
+            self.entry_in_flight = False
+            return
+        if live_size < 0:
+            print("[EMERGENCY] Cannot verify position (API error) - will retry on reconnect", flush=True)
+            return
+
+        # Determine exit side from exchange position
         try:
-            await self.monitor_orderbook()
-        except KeyboardInterrupt:
-            print("\n\n" + "="*80)
-            print("[STOPPED] User interrupted")
-            print("="*80)
-            self.print_stats()
-            print("="*80)
+            pos = self.client.get_position(self.coin)
+            if not pos or abs(pos.size) == 0:
+                print("[EMERGENCY] Position disappeared between checks", flush=True)
+                self.position = None
+                self.open_positions = 0
+                self.entry_in_flight = False
+                return
+            pos_side = "LONG" if pos.size > 0 else "SHORT"
+            pos_size = abs(pos.size)
         except Exception as e:
-            print(f"\n[ERROR] {e}")
-            import traceback
-            traceback.print_exc()
-        finally:
-            pass
+            print(f"[EMERGENCY] Cannot read position details: {e}", flush=True)
+            return
+
+        print(f"[EMERGENCY] Open {pos_side} position (size={pos_size:.6f}) - closing via REST", flush=True)
+
+        # Get fresh quotes via REST
+        self.refresh_quotes()
+        bid = self.current_bid
+        ask = self.current_ask
+
+        if not bid or not ask:
+            print("[EMERGENCY] Cannot get quotes for exit - position will be caught by orphan recovery", flush=True)
+            return
+
+        # Place aggressive exit order
+        if pos_side == "LONG":
+            exit_side = OrderSide.SELL
+            exit_price = self.client.format_price(self.coin, bid * 0.999)  # Extra aggressive for emergency
+        else:
+            exit_side = OrderSide.BUY
+            exit_price = self.client.format_price(self.coin, ask * 1.001)
+
+        print(f"[EMERGENCY] Placing {exit_side.value} @ ${exit_price:.2f}, size={pos_size:.6f}", flush=True)
+
+        try:
+            exit_order = self.client.place_limit_order(
+                coin=self.coin,
+                side=exit_side,
+                price=exit_price,
+                size=pos_size,
+                reduce_only=True,
+                post_only=False,
+                dry_run=self.dry_run
+            )
+        except Exception as e:
+            print(f"[EMERGENCY] Exit order failed: {e}", flush=True)
+            return
+
+        if not exit_order:
+            print("[EMERGENCY] Exit order rejected", flush=True)
+            return
+
+        # Confirm flat (longer timeout for emergency)
+        confirm_deadline = time.time() + 5.0
+        while time.time() < confirm_deadline:
+            live = self.get_live_position_size()
+            if live == 0.0:
+                print("[EMERGENCY] Position closed successfully!", flush=True)
+                self.position = None
+                self.open_positions = 0
+                self.entry_in_flight = False
+                self.last_exit_time = time.time()
+                return
+            await asyncio.sleep(0.25)
+
+        print("[EMERGENCY] Exit order sent but flat not confirmed - orphan recovery will handle on restart", flush=True)
+        # Reset internal state regardless so reconnect starts clean
+        self.position = None
+        self.open_positions = 0
+        self.entry_in_flight = False
+
+    async def run(self):
+        """Run the market maker with auto-reconnection.
+
+        On WS disconnect:
+        1. Emergency-close any open position via REST
+        2. Wait with exponential backoff (2s -> 4s -> 8s ... max 30s)
+        3. Reconnect and resume (candle/bias state preserved on self)
+        """
+        reconnect_delay = 2
+        max_reconnect_delay = 30
+
+        while True:
+            try:
+                await self.monitor_orderbook()
+                break  # Clean exit (e.g. max trades reached)
+            except KeyboardInterrupt:
+                print("\n\n" + "="*80)
+                print("[STOPPED] User interrupted")
+                print("="*80)
+                self.print_stats()
+                print("="*80)
+                break
+            except Exception as e:
+                print(f"\n[WS CRASH] Connection lost: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+
+                # Emergency: close any open position before reconnecting
+                if self.position is not None or self.open_positions > 0:
+                    try:
+                        await self._emergency_close()
+                    except Exception as exit_err:
+                        print(f"[EMERGENCY] Error during emergency close: {exit_err}", flush=True)
+
+                print(f"[RECONNECT] Waiting {reconnect_delay}s before reconnecting...", flush=True)
+                await asyncio.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
+                print("[RECONNECT] Reconnecting to orderbook feed...", flush=True)
 
     def print_stats(self):
         """Print performance statistics"""

@@ -31,6 +31,10 @@ max hold time (60 min) -> stop loss -> trailing TP -> opposite 5-streak -> bias-
 
 ## Position-Safety Guards (Current)
 
+- **WS crash emergency exit:**
+on WebSocket disconnect, bot immediately attempts to close any open position via REST API before reconnecting. Prevents positions from being orphaned.
+- **Auto-reconnect with backoff:**
+`run()` wraps the WS connection in a retry loop (2s → 4s → 8s … 30s max). Bot reconnects automatically instead of dying. Candle/bias state preserved across reconnections.
 - **Startup orphan recovery:**
 on launch, bot checks exchange for any open position and closes it immediately before starting the main loop. Prevents stuck positions after restart.
 - **Universal post-exit cooldown:**
@@ -100,6 +104,21 @@ Additional defaults currently used by the class:
 - `requirements.txt` - Python dependencies
 
 ## Recent Changes
+
+### Fix 5: WS crash kills monitor — add emergency exit + auto-reconnect (2026-02-14)
+
+**Problem:** Fix 4 conditions were correct but never ran. WebSocket disconnections (`ConnectionResetError: Connection reset by peer`) crashed the entire bot, killing `monitor_position` mid-trade. The position sat unmonitored on the exchange until Railway restarted the process and orphan recovery eventually closed it — often 2+ hours later.
+
+**Root Cause Analysis:**
+1. **No auto-reconnect:** `run()` called `monitor_orderbook()` once. Any WS exception killed the process.
+2. **No emergency exit:** The `finally` block in `monitor_orderbook` cancelled the `trade_worker` task (killing `monitor_position`) but made no attempt to close the open position before dying.
+3. **Orphan recovery too slow:** Process restart depended on Railway's scheduler, introducing unpredictable delay.
+
+**Solutions Implemented:**
+1. **Emergency exit on WS crash:** New `_emergency_close()` method checks the exchange via REST and closes any open position immediately after a WS disconnect, before reconnecting. Uses extra-aggressive pricing (0.1% buffer) since this is a safety exit.
+2. **Auto-reconnect with backoff:** `run()` now wraps `monitor_orderbook()` in a retry loop. On WS crash: emergency-close position → wait (2s→4s→8s...30s max) → reconnect. Candle/bias state preserved on `self` across reconnections.
+
+**What was NOT changed:** Entry logic, exit conditions, strategy parameters — all unchanged. Orphan recovery on startup also still runs as a fallback.
 
 ### Fix 4: Opposite streak exit blocked by bias gate + max hold priority (2026-02-13)
 
