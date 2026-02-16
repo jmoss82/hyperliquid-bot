@@ -21,13 +21,13 @@ python directional_trend_tester.py
 3. Build separate 60-second candles for higher-timeframe bias.
 4. Compute sticky bias state from bias WMA distance + slope + confirmation counters.
 5. Track consecutive fast-trend streaks.
-6. Trigger desired direction after 5-in-a-row (`LONG` on UP streak, `SHORT` on DOWN streak).
+6. Trigger desired direction after 6-in-a-row (`LONG` on UP streak, `SHORT` on DOWN streak).
 7. Bias gate REQUIRES match (one direction at a time):
 `LONG` only when bias is `UP`; `SHORT` only when bias is `DOWN`.
 No trading when bias is `FLAT` or `UNKNOWN`.
 8. Place taker-style entries/exits (market emulated via aggressive limit).
 9. Exit priority:
-max hold time (60 min) -> stop loss -> trailing TP -> opposite 5-streak -> bias-flip.
+max hold time (60 min) -> stop loss -> trailing TP -> opposite 6-streak -> bias-flip.
 
 ## Position-Safety Guards (Current)
 
@@ -88,20 +88,19 @@ mm = MarketMaker(
 ```
 
 Additional defaults currently used by the class:
-- `required_streak = 5`
+- `required_streak = 6`
 - `stop_loss_pct = 0.04` (4% notional, was 6%)
 - `position_check_interval = 0.1`
 - `wma_slope_shift_candles = 3`
 - `min_wma_slope_bps = 0.8`
 - `consecutive_losses = 0` (tracks back-to-back losses)
 - `loss_streak_threshold = 2` (consecutive losses to trigger extended cooldown)
-- `loss_streak_cooldown_s = 900.0` (15 min cooldown after loss streak)
+- `loss_streak_cooldown_s = 1800.0` (30 min cooldown after loss streak)
 
 ## Files
 
 - `market_maker.py` - live strategy and execution loop
 - `directional_trend_tester.py` - trend monitor only (no orders)
-- `directional_trend_tester_original.py` - legacy reference monitor
 - `candle_builder.py` - candle construction + WMA
 - `account_monitor.py` - periodic balance/position monitor
 - `debug_positions.py` - raw user-state position diagnostics
@@ -109,6 +108,13 @@ Additional defaults currently used by the class:
 - `requirements.txt` - Python dependencies
 
 ## Recent Changes
+
+### Tuning: Streak 5→6 and loss cooldown 15→30 min (2026-02-16)
+
+Two micro-adjustments based on Feb 15-16 trade data analysis (55 trades):
+
+1. **Required streak: 5 → 6** — Entry and opposite-streak exit now require 6 consecutive candles instead of 5. On 5s candles this is 30 seconds of agreement vs 25s. Small increase to filter marginal signals.
+2. **Loss streak cooldown: 15 min → 30 min** — After 2+ consecutive losses (chop detection), cooldown extended from 15 to 30 minutes. Data showed the bot re-entering chop after 15 min and losing again. Normal 2-min cooldown after wins/single losses unchanged.
 
 ### Enhancement: Loss streak extended cooldown (2026-02-14)
 

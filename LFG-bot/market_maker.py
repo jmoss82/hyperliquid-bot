@@ -8,13 +8,13 @@ Strategy (Trend Streak with Market Orders):
 4. Count consecutive trend streaks
 5. Enter after 5 consecutive UP (LONG) or DOWN (SHORT) trends
 6. Market entries and exits (taker orders)
-7. Exit on: stop loss, trailing take-profit, opposite 5-in-a-row streak, or bias-flip
+7. Exit on: stop loss, trailing take-profit, opposite 6-in-a-row streak, or bias-flip
 
 Key parameters:
 - position_size_usd: Size per trade (default: $11)
 - stop_loss_pct: Stop loss as percent of position notional (default: 6%)
 - wma_period: WMA period (default: 60 = 5 minutes)
-- required_streak: Consecutive trends to trigger entry (default: 5)
+- required_streak: Consecutive trends to trigger entry (default: 6)
 """
 import asyncio
 import websockets
@@ -187,7 +187,7 @@ class MarketMaker:
         self.last_bias_distance_bps: Optional[float] = None
 
         # Streak tracking
-        self.required_streak = 5  # 5-in-a-row to trigger entry
+        self.required_streak = 6  # 6-in-a-row to trigger entry
         self.up_streak = 0
         self.down_streak = 0
         self.desired_position: Optional[str] = None  # "LONG", "SHORT", or None
@@ -210,7 +210,7 @@ class MarketMaker:
         # Loss streak cooldown
         self.consecutive_losses = 0
         self.loss_streak_threshold = 2          # Number of consecutive losses to trigger extended cooldown
-        self.loss_streak_cooldown_s = 900.0     # 15 minutes
+        self.loss_streak_cooldown_s = 1800.0    # 30 minutes
 
     def _normalize_status(self, status: Optional[XYZOrderStatus]) -> str:
         """Normalize order status to internal uppercase strings."""
@@ -562,7 +562,7 @@ class MarketMaker:
         1. Max hold time -> Taker exit immediately (highest priority safety net)
         2. Stop Loss (-4% notional) -> Taker exit immediately
         3. Trailing Take-Profit (activate at +N bps, trail M bps from high) -> Taker exit
-        4. Opposite 5-in-a-row streak (raw counters, no bias gate) -> Taker exit immediately
+        4. Opposite 6-in-a-row streak (raw counters, no bias gate) -> Taker exit immediately
         5. Bias-flip exit (bias reverses against position) -> Taker exit immediately
 
         Args:
@@ -575,7 +575,7 @@ class MarketMaker:
         print(f"[MONITOR_POSITION ENTRY] Function called! Monitoring {position_type} @ ${entry_price:.2f} | Size: {size:.4f}", flush=True)
         print(f"[POSITION] {position_type} @ ${entry_price:.2f} | Size: {size:.4f}", flush=True)
         print(
-            f"[POSITION] Exit: Opposite 5-streak | "
+            f"[POSITION] Exit: Opposite {self.required_streak}-streak | "
             f"SL -{self.stop_loss_pct:.2%} notional | "
             f"Trail TP {self.trailing_tp_trail_bps:.0f}bps (activate +{self.trailing_tp_activation_bps:.0f}bps)"
             f"{' | Bias-flip' if self.exit_on_bias_flip else ''}"
@@ -719,10 +719,10 @@ class MarketMaker:
             # Uses raw streak counters — NOT gated by bias. Bias gate is for entries only.
             # Exit only — do NOT carry the signal into a new entry.
             # Clear desired_position and reset streaks so the bot must build
-            # a fresh 5-in-a-row before entering the opposite direction.
+            # a fresh streak before entering the opposite direction.
             # ====================================================================================
             if entry_side == OrderSide.BUY and self.down_streak >= self.required_streak:
-                print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting LONG (no auto-flip)", flush=True)
+                print(f"\n[STREAK EXIT] Opposite {self.required_streak}-in-a-row - exiting LONG (no auto-flip)", flush=True)
                 exit_ok = await self.exit_position_fast(entry_side, entry_price, size)
                 if exit_ok:
                     self.open_positions = 0
@@ -736,7 +736,7 @@ class MarketMaker:
                 continue
 
             if entry_side == OrderSide.SELL and self.up_streak >= self.required_streak:
-                print(f"\n[STREAK EXIT] Opposite 5-in-a-row - exiting SHORT (no auto-flip)", flush=True)
+                print(f"\n[STREAK EXIT] Opposite {self.required_streak}-in-a-row - exiting SHORT (no auto-flip)", flush=True)
                 exit_ok = await self.exit_position_fast(entry_side, entry_price, size)
                 if exit_ok:
                     self.open_positions = 0
