@@ -44,9 +44,6 @@ testing/
 # Archive folder
 archive/
 
-# WIP bot (not ready for deployment)
-xyz-100-bot/
-
 # Railway
 .railway/
 
