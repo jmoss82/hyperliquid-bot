@@ -158,6 +158,44 @@ class CandleBuilder:
         else:
             return "FLAT"
 
+    def calculate_efficiency_ratio(self, period: int, price_type: str = 'close') -> Optional[float]:
+        """
+        Calculate Kaufman Efficiency Ratio over the last N candles.
+
+        ER = |net move| / total path length
+
+        Returns 0.0-1.0 where:
+            ~1.0 = strong directional trend (price moves in a straight line)
+            ~0.0 = pure chop (lots of movement, goes nowhere)
+
+        Args:
+            period: Number of candles to look back
+            price_type: 'weighted_close', 'mid_price', or 'close'
+
+        Returns:
+            Efficiency ratio (0.0-1.0), or None if insufficient data
+        """
+        if len(self.candles) < period:
+            return None
+
+        recent = list(self.candles)[-period:]
+
+        if price_type == 'weighted_close':
+            prices = [c.weighted_close() for c in recent]
+        elif price_type == 'mid_price':
+            prices = [c.mid_price() for c in recent]
+        else:
+            prices = [c.close for c in recent]
+
+        net_move = abs(prices[-1] - prices[0])
+
+        total_path = sum(abs(prices[i] - prices[i - 1]) for i in range(1, len(prices)))
+
+        if total_path == 0:
+            return 0.0
+
+        return net_move / total_path
+
     def get_stats(self) -> dict:
         """Get current statistics for debugging/monitoring"""
         if not self.candles or not self.current_candle:

@@ -6,15 +6,15 @@ Strategy (Trend Streak with Market Orders):
 2. Calculate 60-period WMA using weighted close (H+L+C+C)/4
 3. Determine trend state with hysteresis (UP/DOWN/FLAT)
 4. Count consecutive trend streaks
-5. Enter after 5 consecutive UP (LONG) or DOWN (SHORT) trends
+5. Enter after required_streak consecutive UP (LONG) or DOWN (SHORT) trends
 6. Market entries and exits (taker orders)
-7. Exit on: stop loss, trailing take-profit, opposite 6-in-a-row streak, or bias-flip
+7. Exit on: stop loss, trailing take-profit, opposite 5-in-a-row streak, or bias-flip
 
 Key parameters:
 - position_size_usd: Size per trade (default: $11)
 - stop_loss_pct: Stop loss as percent of position notional (default: 6%)
 - wma_period: WMA period (default: 60 = 5 minutes)
-- required_streak: Consecutive trends to trigger entry (default: 6)
+- required_streak: Consecutive trends to trigger entry (default: 5)
 """
 import asyncio
 import websockets
@@ -81,6 +81,9 @@ class MarketMaker:
         bias_slope_shift_candles: int = 3,
         bias_min_slope_bps: float = 0.4,
         bias_confirm_candles: int = 2,
+        # Chop filter (Kaufman Efficiency Ratio)
+        min_trend_efficiency: float = 0.0,
+        efficiency_period: int = 14,
         # Trailing take-profit
         trailing_tp_activation_bps: float = 20.0,
         trailing_tp_trail_bps: float = 25.0,
@@ -187,7 +190,7 @@ class MarketMaker:
         self.last_bias_distance_bps: Optional[float] = None
 
         # Streak tracking
-        self.required_streak = 6  # 6-in-a-row to trigger entry
+        self.required_streak = 5  # 5-in-a-row to trigger entry
         self.up_streak = 0
         self.down_streak = 0
         self.desired_position: Optional[str] = None  # "LONG", "SHORT", or None
@@ -196,6 +199,10 @@ class MarketMaker:
         # Position management parameters (Streak exits)
         self.stop_loss_pct = 0.04  # Exit at -4% of position notional (was 0.06, then 0.02)
         self.position_check_interval = 0.1  # Check every 0.1 seconds
+
+        # Chop filter (Kaufman Efficiency Ratio)
+        self.min_trend_efficiency = min_trend_efficiency
+        self.efficiency_period = efficiency_period
 
         # Trailing take-profit
         self.trailing_tp_activation_bps = trailing_tp_activation_bps
@@ -562,7 +569,7 @@ class MarketMaker:
         1. Max hold time -> Taker exit immediately (highest priority safety net)
         2. Stop Loss (-4% notional) -> Taker exit immediately
         3. Trailing Take-Profit (activate at +N bps, trail M bps from high) -> Taker exit
-        4. Opposite 6-in-a-row streak (raw counters, no bias gate) -> Taker exit immediately
+        4. Opposite 5-in-a-row streak (raw counters, no bias gate) -> Taker exit immediately
         5. Bias-flip exit (bias reverses against position) -> Taker exit immediately
 
         Args:
@@ -1074,6 +1081,12 @@ class MarketMaker:
         print(f"  Bias Enter/Exit:  {self.bias_enter_bps:.1f}/{self.bias_exit_bps:.1f} bps")
         print(f"  Min Slope:        {self.bias_min_slope_bps:.1f} bps")
         print(f"  Confirm Candles:  {self.bias_confirm_candles}")
+        print(f"\nChop Filter (Efficiency Ratio):")
+        if self.min_trend_efficiency > 0:
+            print(f"  Min ER:           {self.min_trend_efficiency:.2f} ({self.min_trend_efficiency*100:.0f}%)")
+            print(f"  ER Lookback:      {self.efficiency_period} candles ({self.efficiency_period * self.candle_builder.candle_interval}s)")
+        else:
+            print(f"  Status:           DISABLED (min_trend_efficiency=0)")
         print(f"\nPosition Management:")
         print(f"  Exit Trigger:     Opposite {self.required_streak}-streak OR stop loss OR trailing TP{' OR bias-flip' if self.exit_on_bias_flip else ''}")
         print(f"  Stop Loss:        -{self.stop_loss_pct:.2%} notional (immediate)")
@@ -1242,6 +1255,21 @@ class MarketMaker:
                                             )
                                             desired_position = None
 
+                                    # Chop filter: Efficiency Ratio gate
+                                    if desired_position is not None and self.min_trend_efficiency > 0:
+                                        er = self.candle_builder.calculate_efficiency_ratio(
+                                            self.efficiency_period, self.wma_price_type
+                                        )
+                                        if er is not None and er < self.min_trend_efficiency:
+                                            print(
+                                                f"[CHOP FILTER] ER={er:.2f} ({er*100:.0f}%) < "
+                                                f"{self.min_trend_efficiency:.2f} ({self.min_trend_efficiency*100:.0f}%) "
+                                                f"- blocking {desired_position} entry | "
+                                                f"up={self.up_streak} down={self.down_streak}",
+                                                flush=True
+                                            )
+                                            desired_position = None
+
                                     if desired_position is not None and desired_position != self.position:
                                         self.desired_position = desired_position
                                         self.position = desired_position
@@ -1261,10 +1289,14 @@ class MarketMaker:
                                         else "n/a"
                                     )
                                     n_bias_candles = len(self.bias_candle_builder.candles)
+                                    er = self.candle_builder.calculate_efficiency_ratio(
+                                        self.efficiency_period, self.wma_price_type
+                                    )
+                                    er_str = f"{er:.2f}" if er is not None else "n/a"
                                     line = (
                                         f"[{ts}] Price: ${eval_price:.3f} | WMA: ${wma_str} | "
                                         f"Dist: {dist_str} bps | Slope: {slope_bps:+.1f} bps | "
-                                        f"Trend: {trend} | "
+                                        f"Trend: {trend} | ER: {er_str} | "
                                         f"Bias: {bias} (WMA:{bias_str} Dist:{bias_dist_str} "
                                         f"Slope:{bias_slope_str} N:{n_bias_candles}/{self.bias_wma_period}) | "
                                         f"streaks U:{self.up_streak} D:{self.down_streak} | "
@@ -1499,6 +1531,8 @@ async def main():
             bias_slope_shift_candles=3,     # ~3 min slope window (1-min candles, was 6)
             bias_min_slope_bps=0.4,         # Slightly forgiving (longer window smooths)
             bias_confirm_candles=2,         # ~2 min confirmation before bias flips (was 4)
+            min_trend_efficiency=0.30,          # Chop filter: block entry if ER < 30% (0=disabled)
+            efficiency_period=14,               # ER lookback: 14 candles (70s on 5s candles)
             trailing_tp_activation_bps=20.0,  # Trail activates after +20 bps profit (mid)
             trailing_tp_trail_bps=25.0,       # 25 bps trail width from high-water mark
             exit_on_bias_flip=True,           # Exit if bias reverses against position

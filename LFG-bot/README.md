@@ -21,13 +21,14 @@ python directional_trend_tester.py
 3. Build separate 60-second candles for higher-timeframe bias.
 4. Compute sticky bias state from bias WMA distance + slope + confirmation counters.
 5. Track consecutive fast-trend streaks.
-6. Trigger desired direction after 6-in-a-row (`LONG` on UP streak, `SHORT` on DOWN streak).
-7. Bias gate REQUIRES match (one direction at a time):
+6. Trigger desired direction after 5-in-a-row (`LONG` on UP streak, `SHORT` on DOWN streak).
+7. **Chop filter:** Calculate Kaufman Efficiency Ratio over last 14 fast candles. Block entry if ER < 0.30 (market is ranging, not trending).
+8. Bias gate REQUIRES match (one direction at a time):
 `LONG` only when bias is `UP`; `SHORT` only when bias is `DOWN`.
 No trading when bias is `FLAT` or `UNKNOWN`.
-8. Place taker-style entries/exits (market emulated via aggressive limit).
-9. Exit priority:
-max hold time (60 min) -> stop loss -> trailing TP -> opposite 6-streak -> bias-flip.
+9. Place taker-style entries/exits (market emulated via aggressive limit).
+10. Exit priority:
+max hold time (60 min) -> stop loss -> trailing TP -> opposite 5-streak -> bias-flip.
 
 ## Position-Safety Guards (Current)
 
@@ -40,7 +41,7 @@ on launch, bot checks exchange for any open position and closes it immediately b
 - **Universal post-exit cooldown:**
 `post_exit_cooldown_s=120.0` blocks all new entries for 2 minutes after any confirmed close.
 - **Loss streak extended cooldown:**
-after 2+ consecutive losing trades, cooldown extends to 15 minutes (`loss_streak_cooldown_s=900.0`). Resets to normal 2-minute cooldown after any winning trade. Prevents re-entering during chop.
+after 2+ consecutive losing trades, cooldown extends to 30 minutes (`loss_streak_cooldown_s=1800.0`). Resets to normal 2-minute cooldown after any winning trade. Prevents re-entering during chop.
 - **Exchange-truth entry gate:**
 before entry, bot checks live position via API and blocks if non-flat. API errors are treated as "position exists" (fail-safe).
 - **Exit confirmation:**
@@ -80,6 +81,8 @@ mm = MarketMaker(
     bias_slope_shift_candles=3,
     bias_min_slope_bps=0.4,
     bias_confirm_candles=2,
+    min_trend_efficiency=0.30,
+    efficiency_period=14,
     trailing_tp_activation_bps=20.0,
     trailing_tp_trail_bps=25.0,
     exit_on_bias_flip=True,
@@ -88,7 +91,7 @@ mm = MarketMaker(
 ```
 
 Additional defaults currently used by the class:
-- `required_streak = 6`
+- `required_streak = 5`
 - `stop_loss_pct = 0.04` (4% notional, was 6%)
 - `position_check_interval = 0.1`
 - `wma_slope_shift_candles = 3`
@@ -109,11 +112,24 @@ Additional defaults currently used by the class:
 
 ## Recent Changes
 
+### Enhancement: Chop filter via Kaufman Efficiency Ratio + streak reverted to 5 (2026-02-16)
+
+**Problem:** Bot consistently enters during choppy/ranging markets. Streak-based entry (even at 6-in-a-row) doesn't distinguish between a real trend and a bounce within a range. Half of trades are chop losses where the bot enters at the top/bottom of a range just before price reverses.
+
+**Root Cause Analysis:**
+The streak requirement only measures *duration* (N consecutive same-direction candles), not *quality* (is price actually going somewhere?). In a tight range, price can bounce off support, string together 5-6 UP candles, and trigger a LONG right as it stalls back into the range. Increasing streak from 5 to 6 didn't help — it just added entry lag without filtering chop.
+
+**Solutions Implemented:**
+1. **Kaufman Efficiency Ratio (ER) chop filter** — New entry gate in `candle_builder.py` and `market_maker.py`. Measures directional efficiency over the last 14 fast candles (70s): `ER = |net move| / total path`. Returns 0.0 (pure chop) to 1.0 (straight-line trend). Entries blocked when `ER < 0.30`. Logged on every candle as `ER: 0.xx` for real-time tuning.
+2. **Required streak: 6 → 5** — Reverted. The ER filter is a better chop detector than a longer streak, and 6 was adding entry lag on real trends without meaningfully filtering chop.
+
+**What was NOT changed:** Bias gate, exit conditions, trailing TP, stop loss, cooldowns — all unchanged.
+
 ### Tuning: Streak 5→6 and loss cooldown 15→30 min (2026-02-16)
 
 Two micro-adjustments based on Feb 15-16 trade data analysis (55 trades):
 
-1. **Required streak: 5 → 6** — Entry and opposite-streak exit now require 6 consecutive candles instead of 5. On 5s candles this is 30 seconds of agreement vs 25s. Small increase to filter marginal signals.
+1. **Required streak: 5 → 6** — Entry and opposite-streak exit now require 6 consecutive candles instead of 5. On 5s candles this is 30 seconds of agreement vs 25s. Small increase to filter marginal signals. *(Reverted — see above.)*
 2. **Loss streak cooldown: 15 min → 30 min** — After 2+ consecutive losses (chop detection), cooldown extended from 15 to 30 minutes. Data showed the bot re-entering chop after 15 min and losing again. Normal 2-min cooldown after wins/single losses unchanged.
 
 ### Enhancement: Loss streak extended cooldown (2026-02-14)
